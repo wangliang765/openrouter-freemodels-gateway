@@ -64,9 +64,11 @@ const API_KEY_QUOTA_RESET_KEY = "riverflow.lastQuotaResetAt";
 const MODEL_CACHE_KEY = "openrouter.modelCache";
 const CHAT_MESSAGES_KEY = "openrouter.chatMessages";
 const ACTIVITY_LOG_KEY = "openrouter.activityLog";
+const APP_SETTINGS_KEY = "openrouter.appSettings";
 const MAX_ACTIVITY_ITEMS = 200;
 const LOCAL_BACKUP_VERSION = 1;
 const LOCAL_BACKUP_ITEMS = [
+  { key: APP_SETTINGS_KEY, label: "当前设置", fallback: null },
   { key: TEMPLATE_KEY, label: "提示词模板", fallback: {} },
   { key: MODEL_CACHE_KEY, label: "模型缓存", fallback: null },
   { key: CHAT_MESSAGES_KEY, label: "聊天记录", fallback: [] },
@@ -86,6 +88,7 @@ let lastQuotaResetAt = readStoredQuotaResetAt();
 let modelCache = readStoredModelCache();
 let chatMessages = readStoredChatMessages();
 let activityLog = readStoredActivityLog();
+let appSettings = readStoredAppSettings();
 let currentBatchKeys = [];
 
 function fallbackModelCache() {
@@ -227,6 +230,31 @@ function readStoredActivityLog() {
 
 function writeStoredActivityLog() {
   writeJsonStorage(ACTIVITY_LOG_KEY, activityLog.slice(0, MAX_ACTIVITY_ITEMS));
+}
+
+function defaultAppSettings() {
+  return {
+    chatModel: DEFAULT_TEXT_MODEL,
+    imageModel: DEFAULT_IMAGE_MODEL,
+    count: "4",
+    concurrency: "3",
+    queueMode: false,
+    retryMax: "3",
+    retryDelaySeconds: "70",
+    imageSize: "auto",
+    aspectRatio: "auto"
+  };
+}
+
+function readStoredAppSettings() {
+  const settings = readJsonStorage(APP_SETTINGS_KEY, {});
+  return settings && typeof settings === "object" && !Array.isArray(settings)
+    ? { ...defaultAppSettings(), ...settings }
+    : defaultAppSettings();
+}
+
+function writeStoredAppSettings() {
+  writeJsonStorage(APP_SETTINGS_KEY, appSettings);
 }
 
 function clipText(text, max = 180) {
@@ -459,6 +487,40 @@ function applyTemplate(template) {
   imageSizeInput.value = template.imageSize || "auto";
   aspectRatioInput.value = template.aspectRatio || "auto";
   syncQueueControls();
+  persistAppSettings();
+}
+
+function currentAppSettings() {
+  return {
+    chatModel: chatModelSelect.value || appSettings.chatModel || DEFAULT_TEXT_MODEL,
+    imageModel: imageModelSelect.value || appSettings.imageModel || DEFAULT_IMAGE_MODEL,
+    count: countInput.value || "4",
+    concurrency: concurrencyInput.value || "3",
+    queueMode: queueModeInput.checked,
+    retryMax: retryMaxInput.value || "3",
+    retryDelaySeconds: retryDelaySecondsInput.value || "70",
+    imageSize: imageSizeInput.value || "auto",
+    aspectRatio: aspectRatioInput.value || "auto"
+  };
+}
+
+function persistAppSettings() {
+  appSettings = currentAppSettings();
+  writeStoredAppSettings();
+  renderLocalDataSummary();
+}
+
+function applyAppSettings() {
+  chatModelSelect.value = appSettings.chatModel || DEFAULT_TEXT_MODEL;
+  imageModelSelect.value = appSettings.imageModel || DEFAULT_IMAGE_MODEL;
+  countInput.value = appSettings.count || "4";
+  concurrencyInput.value = appSettings.concurrency || "3";
+  queueModeInput.checked = appSettings.queueMode === true;
+  retryMaxInput.value = appSettings.retryMax || "3";
+  retryDelaySecondsInput.value = appSettings.retryDelaySeconds || "70";
+  imageSizeInput.value = appSettings.imageSize || "auto";
+  aspectRatioInput.value = appSettings.aspectRatio || "auto";
+  syncQueueControls();
 }
 
 function maskApiKey(key) {
@@ -504,7 +566,8 @@ function modelLabel(model) {
 }
 
 function setSelectOptions(select, models, fallbackId) {
-  const previous = select.value || fallbackId;
+  const storedValue = select === chatModelSelect ? appSettings.chatModel : select === imageModelSelect ? appSettings.imageModel : "";
+  const previous = select.value || storedValue || fallbackId;
   select.innerHTML = "";
 
   for (const model of models) {
@@ -592,12 +655,14 @@ function renderModelHealthStats(models) {
 function selectModelForUse(model, target) {
   if (target === "chat") {
     chatModelSelect.value = model.id;
+    persistAppSettings();
     showView("chatView");
     setState("已选择聊天模型", "idle");
     return;
   }
 
   imageModelSelect.value = model.id;
+  persistAppSettings();
   showView("generateView");
   setState("已选择生图模型", "idle");
 }
@@ -737,6 +802,7 @@ function exportActivityLog() {
 }
 
 function backupValueForKey(key) {
+  if (key === APP_SETTINGS_KEY) return currentAppSettings();
   if (key === TEMPLATE_KEY) return readTemplates();
   if (key === MODEL_CACHE_KEY) return modelCache;
   if (key === CHAT_MESSAGES_KEY) return chatMessages.slice(-40);
@@ -766,6 +832,7 @@ function exportLocalData() {
 }
 
 function validBackupValue(key, value) {
+  if (key === APP_SETTINGS_KEY) return isPlainObject(value);
   if (key === TEMPLATE_KEY) return isPlainObject(value);
   if (key === MODEL_CACHE_KEY) return isPlainObject(value) && (Array.isArray(value.text) || Array.isArray(value.image) || Array.isArray(value.models));
   if (key === CHAT_MESSAGES_KEY) return Array.isArray(value);
@@ -774,9 +841,11 @@ function validBackupValue(key, value) {
 }
 
 function reloadLocalBackupState() {
+  appSettings = readStoredAppSettings();
   modelCache = readStoredModelCache();
   chatMessages = readStoredChatMessages();
   activityLog = readStoredActivityLog();
+  applyAppSettings();
   refreshTemplates();
   renderModelLists();
   renderChatMessages();
@@ -826,7 +895,7 @@ async function importLocalDataFromFile() {
 function renderLocalDataSummary() {
   const templates = Object.keys(readTemplates()).length;
   const modelCount = (modelCache.text?.length || 0) + (modelCache.image?.length || 0);
-  localDataSummary.textContent = `${templates} 个模板 · ${modelCount} 个模型缓存 · ${chatMessages.length} 条聊天 · ${activityLog.length} 条运行记录 · 不包含 API key`;
+  localDataSummary.textContent = `${templates} 个模板 · ${modelCount} 个模型缓存 · ${chatMessages.length} 条聊天 · ${activityLog.length} 条运行记录 · 当前设置已保存 · 不包含 API key`;
 }
 
 async function loadModels() {
@@ -1456,7 +1525,19 @@ deleteTemplateButton.addEventListener("click", () => {
   progressText.textContent = `模板已删除：${name}`;
 });
 
-queueModeInput.addEventListener("change", syncQueueControls);
+chatModelSelect.addEventListener("change", persistAppSettings);
+imageModelSelect.addEventListener("change", persistAppSettings);
+for (const input of [countInput, concurrencyInput, retryMaxInput, retryDelaySecondsInput]) {
+  input.addEventListener("input", persistAppSettings);
+  input.addEventListener("change", persistAppSettings);
+}
+for (const input of [imageSizeInput, aspectRatioInput]) {
+  input.addEventListener("change", persistAppSettings);
+}
+queueModeInput.addEventListener("change", () => {
+  syncQueueControls();
+  persistAppSettings();
+});
 viewTabs.forEach((tab) => {
   tab.addEventListener("click", () => showView(tab.dataset.view));
 });
@@ -1504,7 +1585,7 @@ importLocalDataButton.addEventListener("click", () => localDataImportInput.click
 localDataImportInput.addEventListener("change", importLocalDataFromFile);
 
 refreshTemplates();
-syncQueueControls();
+applyAppSettings();
 renderModelLists();
 renderChatMessages();
 renderApiKeys();

@@ -8,6 +8,7 @@
 - Let chat choose a free language model.
 - Let image generation choose a free image model.
 - Keep API keys in browser localStorage for this local-only phase.
+- Persist selected models and task parameters in browser localStorage.
 - Record and persist model health from real requests without spending quota on automatic probes.
 - Keep a local activity log for chat/image attempts, saved output paths, and request errors.
 - Support local export/import for non-sensitive browser data without including API keys.

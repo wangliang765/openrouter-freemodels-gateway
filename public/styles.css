@@ -91,7 +91,19 @@ textarea {
   justify-content: center;
 }
 
+.chat-workspace,
+.model-page {
+  display: grid;
+  grid-template-columns: minmax(320px, 980px);
+  justify-content: center;
+}
+
 .key-manager {
+  padding: 20px;
+}
+
+.chat-panel,
+.model-manager {
   padding: 20px;
 }
 
@@ -120,6 +132,7 @@ textarea {
 
 h1,
 h2,
+h3,
 p {
   margin: 0;
 }
@@ -131,6 +144,11 @@ h1 {
 
 h2 {
   font-size: 20px;
+}
+
+h3 {
+  font-size: 15px;
+  margin-bottom: 10px;
 }
 
 .title-row p,
@@ -318,6 +336,104 @@ select:focus {
   font-size: 12px;
 }
 
+.chat-messages {
+  display: grid;
+  gap: 10px;
+  max-height: 52vh;
+  min-height: 260px;
+  overflow: auto;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8f5ed;
+}
+
+.chat-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chat-message {
+  max-width: min(760px, 88%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.chat-message.user {
+  justify-self: end;
+  border-color: rgba(15, 118, 110, 0.28);
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.chat-message strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+}
+
+.chat-message p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+.model-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.model-list {
+  display: grid;
+  gap: 8px;
+}
+
+.model-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.model-card strong,
+.model-card code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.model-card code {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.model-card span {
+  color: var(--accent-strong);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.model-card small {
+  color: var(--muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.model-card .model-error,
+.model-card.error span,
+.model-card.provider-timeout span,
+.model-card.no-image span,
+.model-card.no-text span {
+  color: var(--error);
+}
+
 .actions {
   margin-top: 18px;
 }
@@ -488,6 +604,10 @@ progress {
   }
 
   .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .model-grid {
     grid-template-columns: 1fr;
   }
 

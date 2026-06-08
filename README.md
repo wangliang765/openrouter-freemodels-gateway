@@ -1,6 +1,6 @@
 # OpenRouter Free Models Gateway
 
-A local batch image-generation app for OpenRouter free image models. The current default model is `sourceful/riverflow-v2.5-pro:free`.
+A local OpenRouter free-model console for chat, image generation, API key pooling, and model discovery. The current default chat model is `nvidia/nemotron-3-ultra-550b-a55b:free`; the default image model is `sourceful/riverflow-v2.5-pro:free`.
 
 ## Run
 
@@ -12,10 +12,12 @@ Open http://localhost:3000.
 
 ## Usage
 
-- Add one or more OpenRouter API keys in the page key pool before starting a batch.
-- Use the `生图` view for generation and `key池管理` for API key management.
+- Add one or more OpenRouter API keys in `key池管理` before chatting or generating images.
+- Use `聊天` for text models, `生图` for image models, `模型管理` for OpenRouter free-model discovery, and `key池管理` for API key management.
 - API keys in the page key pool are saved in browser localStorage and remain after refresh.
 - The app only uses keys currently shown in the page key pool. `.env` is not used as a fallback.
+- `模型管理` refreshes OpenRouter `/api/v1/models`, filters free models, and separates text and image models.
+- Chat and image generation both use the selected model from the page dropdowns.
 - `Per-key concurrency` is applied to every active key. For example, 4 keys with concurrency 2 can run up to 8 tasks at once.
 - When a key hits `free-models-per-day`, it is marked `daily-limited` and skipped for the rest of the batch.
 - Daily-limited keys are stored with a reset timestamp and automatically return to ready after the next Beijing 08:00 reset.
@@ -25,3 +27,7 @@ Open http://localhost:3000.
 - `Retry count` and `Wait seconds` control automatic retry for network interruptions, timeouts, and temporary 5xx errors.
 - Successful base64 images are saved to the local `outputs/` directory and shown in the result card.
 - Prompt templates are saved in browser localStorage and do not store API keys.
+
+## Roadmap
+
+See `docs/ROADMAP.md` for the local-console phase and the future OpenAI-compatible API gateway phase.

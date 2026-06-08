@@ -1,3 +1,11 @@
+const chatModelSelect = document.querySelector("#chatModelSelect");
+const chatMessagesEl = document.querySelector("#chatMessages");
+const chatInput = document.querySelector("#chatInput");
+const sendChatButton = document.querySelector("#sendChatButton");
+const clearChatButton = document.querySelector("#clearChatButton");
+const refreshModelsFromChatButton = document.querySelector("#refreshModelsFromChatButton");
+const chatKeySummary = document.querySelector("#chatKeySummary");
+const imageModelSelect = document.querySelector("#imageModelSelect");
 const promptInput = document.querySelector("#prompt");
 const promptListInput = document.querySelector("#promptList");
 const apiKeyInput = document.querySelector("#apiKeyInput");
@@ -25,74 +33,134 @@ const progressText = document.querySelector("#progressText");
 const progressBar = document.querySelector("#progressBar");
 const serverState = document.querySelector("#serverState");
 const keyPoolSummary = document.querySelector("#keyPoolSummary");
+const refreshModelsButton = document.querySelector("#refreshModelsButton");
+const modelSummary = document.querySelector("#modelSummary");
+const textModelList = document.querySelector("#textModelList");
+const imageModelList = document.querySelector("#imageModelList");
 const viewTabs = document.querySelectorAll(".tab");
 const views = document.querySelectorAll(".view");
 
-let activeRun = false;
-let total = 0;
-let finished = 0;
-const cards = new Map();
-const taskTimers = new Map();
+const DEFAULT_TEXT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
+const DEFAULT_IMAGE_MODEL = "sourceful/riverflow-v2.5-pro:free";
 const TEMPLATE_KEY = "riverflow.promptTemplates";
 const API_KEYS_KEY = "riverflow.apiKeys";
 const API_KEY_LIMITS_KEY = "riverflow.apiKeyLimits";
 const API_KEY_INFO_KEY = "riverflow.apiKeyInfo";
 const API_KEY_QUOTA_RESET_KEY = "riverflow.lastQuotaResetAt";
+const MODEL_CACHE_KEY = "openrouter.modelCache";
+const CHAT_MESSAGES_KEY = "openrouter.chatMessages";
+
+let activeRun = false;
+let activeChat = false;
+let total = 0;
+let finished = 0;
+const cards = new Map();
+const taskTimers = new Map();
 let apiKeys = readStoredApiKeys();
 let apiKeyLimits = readStoredApiKeyLimits();
 let apiKeyInfo = readStoredApiKeyInfo();
 let lastQuotaResetAt = readStoredQuotaResetAt();
+let modelCache = readStoredModelCache();
+let chatMessages = readStoredChatMessages();
 let currentBatchKeys = [];
 
-function readTemplates() {
+function fallbackModelCache() {
+  const now = Date.now();
+  const models = [
+    {
+      id: DEFAULT_TEXT_MODEL,
+      name: "NVIDIA: Nemotron 3 Ultra (free)",
+      type: "text",
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      supportedParameters: ["max_tokens", "temperature"],
+      pricing: { prompt: "0", completion: "0" },
+      status: "seeded",
+      lastError: "",
+      updatedAt: now
+    },
+    {
+      id: DEFAULT_IMAGE_MODEL,
+      name: "Sourceful: Riverflow v2.5 Pro (free)",
+      type: "image",
+      inputModalities: ["text"],
+      outputModalities: ["image"],
+      supportedParameters: ["image_config"],
+      pricing: { image: "0" },
+      status: "seeded",
+      lastError: "",
+      updatedAt: now
+    },
+    {
+      id: "sourceful/riverflow-v2.5-fast:free",
+      name: "Sourceful: Riverflow v2.5 Fast (free)",
+      type: "image",
+      inputModalities: ["text"],
+      outputModalities: ["image"],
+      supportedParameters: ["image_config"],
+      pricing: { image: "0" },
+      status: "seeded",
+      lastError: "",
+      updatedAt: now
+    }
+  ];
+
+  return {
+    models,
+    text: models.filter((model) => model.type === "text" || model.type === "mixed"),
+    image: models.filter((model) => model.type === "image" || model.type === "mixed"),
+    refreshedAt: 0,
+    source: "seed",
+    error: ""
+  };
+}
+
+function readJsonStorage(key, fallback) {
   try {
-    return JSON.parse(localStorage.getItem(TEMPLATE_KEY) || "{}");
+    const value = JSON.parse(localStorage.getItem(key) || "null");
+    return value ?? fallback;
   } catch {
-    return {};
+    return fallback;
   }
+}
+
+function writeJsonStorage(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function readTemplates() {
+  return readJsonStorage(TEMPLATE_KEY, {});
 }
 
 function writeTemplates(templates) {
-  localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates));
+  writeJsonStorage(TEMPLATE_KEY, templates);
 }
 
 function readStoredApiKeys() {
-  try {
-    const keys = JSON.parse(localStorage.getItem(API_KEYS_KEY) || "[]");
-    return Array.isArray(keys) ? keys.filter((key) => typeof key === "string" && key.trim()) : [];
-  } catch {
-    return [];
-  }
+  const keys = readJsonStorage(API_KEYS_KEY, []);
+  return Array.isArray(keys) ? keys.filter((key) => typeof key === "string" && key.trim()) : [];
 }
 
 function writeStoredApiKeys() {
-  localStorage.setItem(API_KEYS_KEY, JSON.stringify(apiKeys));
+  writeJsonStorage(API_KEYS_KEY, apiKeys);
 }
 
 function readStoredApiKeyLimits() {
-  try {
-    const limits = JSON.parse(localStorage.getItem(API_KEY_LIMITS_KEY) || "{}");
-    return limits && typeof limits === "object" && !Array.isArray(limits) ? limits : {};
-  } catch {
-    return {};
-  }
+  const limits = readJsonStorage(API_KEY_LIMITS_KEY, {});
+  return limits && typeof limits === "object" && !Array.isArray(limits) ? limits : {};
 }
 
 function writeStoredApiKeyLimits() {
-  localStorage.setItem(API_KEY_LIMITS_KEY, JSON.stringify(apiKeyLimits));
+  writeJsonStorage(API_KEY_LIMITS_KEY, apiKeyLimits);
 }
 
 function readStoredApiKeyInfo() {
-  try {
-    const info = JSON.parse(localStorage.getItem(API_KEY_INFO_KEY) || "{}");
-    return info && typeof info === "object" && !Array.isArray(info) ? info : {};
-  } catch {
-    return {};
-  }
+  const info = readJsonStorage(API_KEY_INFO_KEY, {});
+  return info && typeof info === "object" && !Array.isArray(info) ? info : {};
 }
 
 function writeStoredApiKeyInfo() {
-  localStorage.setItem(API_KEY_INFO_KEY, JSON.stringify(apiKeyInfo));
+  writeJsonStorage(API_KEY_INFO_KEY, apiKeyInfo);
 }
 
 function readStoredQuotaResetAt() {
@@ -102,6 +170,28 @@ function readStoredQuotaResetAt() {
 
 function writeStoredQuotaResetAt() {
   localStorage.setItem(API_KEY_QUOTA_RESET_KEY, String(lastQuotaResetAt));
+}
+
+function readStoredModelCache() {
+  const fallback = fallbackModelCache();
+  const cache = readJsonStorage(MODEL_CACHE_KEY, fallback);
+  if (!cache || !Array.isArray(cache.text) || !Array.isArray(cache.image)) return fallback;
+  return cache;
+}
+
+function writeStoredModelCache() {
+  writeJsonStorage(MODEL_CACHE_KEY, modelCache);
+}
+
+function readStoredChatMessages() {
+  const messages = readJsonStorage(CHAT_MESSAGES_KEY, []);
+  return Array.isArray(messages)
+    ? messages.filter((message) => message && typeof message.content === "string" && ["user", "assistant"].includes(message.role))
+    : [];
+}
+
+function writeStoredChatMessages() {
+  writeJsonStorage(CHAT_MESSAGES_KEY, chatMessages.slice(-40));
 }
 
 function nextBeijing8ResetAt(now = new Date()) {
@@ -134,6 +224,18 @@ function latestBeijing8ResetAt(now = new Date()) {
   return resetAt;
 }
 
+function resetEstimatedRemaining(key, resetAt = latestBeijing8ResetAt()) {
+  const free = freeInfoForKey(key);
+  if (!free?.total) return false;
+  free.remaining = free.total;
+  free.source = "local-estimate";
+  free.lastResetAt = resetAt;
+  free.updatedAt = Date.now();
+  apiKeyInfo[key].freeModels = free;
+  writeStoredApiKeyInfo();
+  return true;
+}
+
 function resetExpiredApiKeyLimits() {
   const now = Date.now();
   let changed = false;
@@ -156,9 +258,7 @@ function resetDailyQuotaEstimates() {
 
   let changed = false;
   for (const key of apiKeys) {
-    if (resetEstimatedRemaining(key, latestResetAt)) {
-      changed = true;
-    }
+    if (resetEstimatedRemaining(key, latestResetAt)) changed = true;
   }
 
   lastQuotaResetAt = latestResetAt;
@@ -181,21 +281,18 @@ function markApiKeyDailyLimited(key) {
   writeStoredApiKeyLimits();
 }
 
-function isApiKeyDailyLimited(key) {
-  refreshDailyKeyState();
-  return apiKeyLimits[key]?.status === "daily-limited";
-}
-
 function activeApiKeys() {
   refreshDailyKeyState();
-  return apiKeys.filter((key) => !isApiKeyDailyLimited(key));
+  return apiKeys.filter((key) => apiKeyLimits[key]?.status !== "daily-limited");
 }
 
 function updateKeyPoolSummary() {
   const ready = activeApiKeys().length;
   const totalKeys = apiKeys.length;
   const limited = Object.keys(apiKeyLimits).filter((key) => apiKeys.includes(key)).length;
-  keyPoolSummary.textContent = `${ready} ready / ${totalKeys} total${limited ? `, ${limited} daily-limited` : ""}`;
+  const summary = `${ready} 可用 / ${totalKeys} 总数${limited ? `，${limited} 个已达每日额度` : ""}`;
+  keyPoolSummary.textContent = summary;
+  chatKeySummary.textContent = summary;
 }
 
 function formatBeijingReset(resetAt) {
@@ -204,11 +301,11 @@ function formatBeijingReset(resetAt) {
   const yyyy = date.getUTCFullYear();
   const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(date.getUTCDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd} 08:00 Beijing`;
+  return `${yyyy}-${mm}-${dd} 北京时间 08:00`;
 }
 
 function formatNullable(value) {
-  return value === null || value === undefined ? "unknown" : String(value);
+  return value === null || value === undefined ? "未知" : String(value);
 }
 
 function freeInfoForKey(key) {
@@ -219,9 +316,9 @@ function freeInfoForKey(key) {
 
 function accountTypeForKey(key) {
   const total = freeInfoForKey(key)?.total;
-  if (total === 50) return "Free";
-  if (total === 1000) return "Credited";
-  return "Unknown";
+  if (total === 50) return "免费账户";
+  if (total === 1000) return "已充值账户";
+  return "未知";
 }
 
 function totalQuotaForKey(key) {
@@ -232,18 +329,6 @@ function remainingQuotaForKey(key) {
   const free = freeInfoForKey(key);
   if (!free) return "unknown";
   return formatNullable(free.remaining);
-}
-
-function resetEstimatedRemaining(key, resetAt = latestBeijing8ResetAt()) {
-  const free = freeInfoForKey(key);
-  if (!free?.total) return false;
-  free.remaining = free.total;
-  free.source = "local-estimate";
-  free.lastResetAt = resetAt;
-  free.updatedAt = Date.now();
-  apiKeyInfo[key].freeModels = free;
-  writeStoredApiKeyInfo();
-  return true;
 }
 
 function decrementEstimatedRemaining(key) {
@@ -282,6 +367,7 @@ function refreshTemplates(selectedName = "") {
 
 function currentTemplatePayload() {
   return {
+    imageModel: imageModelSelect.value,
     prompt: promptInput.value,
     promptList: promptListInput.value,
     count: countInput.value,
@@ -295,6 +381,7 @@ function currentTemplatePayload() {
 }
 
 function applyTemplate(template) {
+  if (template.imageModel) imageModelSelect.value = template.imageModel;
   promptInput.value = template.prompt || "";
   promptListInput.value = template.promptList || "";
   countInput.value = template.count || "4";
@@ -345,6 +432,128 @@ function absorbPendingApiKeys() {
   return added;
 }
 
+function modelLabel(model) {
+  return `${model.name || model.id} (${model.id})`;
+}
+
+function setSelectOptions(select, models, fallbackId) {
+  const previous = select.value || fallbackId;
+  select.innerHTML = "";
+
+  for (const model of models) {
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = modelLabel(model);
+    select.append(option);
+  }
+
+  if (!models.some((model) => model.id === fallbackId)) {
+    const option = document.createElement("option");
+    option.value = fallbackId;
+    option.textContent = fallbackId;
+    select.prepend(option);
+  }
+
+  select.value = models.some((model) => model.id === previous) || previous === fallbackId ? previous : fallbackId;
+}
+
+function renderModelSelectors() {
+  setSelectOptions(chatModelSelect, modelCache.text || [], DEFAULT_TEXT_MODEL);
+  setSelectOptions(imageModelSelect, modelCache.image || [], DEFAULT_IMAGE_MODEL);
+}
+
+function renderModelCard(model) {
+  const div = document.createElement("div");
+  div.className = `model-card ${model.status || "unknown"}`;
+  const params = (model.supportedParameters || []).slice(0, 5).join(", ") || "default";
+  const updated = model.updatedAt ? new Date(model.updatedAt).toLocaleString() : "unknown";
+  div.innerHTML = `
+    <div>
+      <strong></strong>
+      <code></code>
+    </div>
+    <span>${model.type || "model"} · ${model.status || "unknown"}</span>
+    <small>Params: ${params}</small>
+    <small>Updated: ${updated}</small>
+    ${model.lastError ? `<small class="model-error">${model.lastError}</small>` : ""}
+  `;
+  div.querySelector("strong").textContent = model.name || model.id;
+  div.querySelector("code").textContent = model.id;
+  return div;
+}
+
+function renderModelLists() {
+  textModelList.innerHTML = "";
+  imageModelList.innerHTML = "";
+
+  const textModels = modelCache.text || [];
+  const imageModels = modelCache.image || [];
+  for (const model of textModels) textModelList.append(renderModelCard(model));
+  for (const model of imageModels) imageModelList.append(renderModelCard(model));
+
+  if (!textModels.length) textModelList.append(emptyModelState("还没有缓存免费文本模型。"));
+  if (!imageModels.length) imageModelList.append(emptyModelState("还没有缓存免费生图模型。"));
+
+  const refreshed = modelCache.refreshedAt ? new Date(modelCache.refreshedAt).toLocaleString() : "尚未刷新";
+  modelSummary.textContent = `${textModels.length} 个文本 / ${imageModels.length} 个生图免费模型 · 刷新时间 ${refreshed}${modelCache.error ? ` · ${modelCache.error}` : ""}`;
+  renderModelSelectors();
+}
+
+function emptyModelState(text) {
+  const div = document.createElement("div");
+  div.className = "key-empty";
+  div.textContent = text;
+  return div;
+}
+
+async function loadModels() {
+  try {
+    const response = await fetch("/api/models");
+    if (!response.ok) throw new Error(response.statusText);
+    modelCache = await response.json();
+    writeStoredModelCache();
+  } catch (error) {
+    modelCache = { ...modelCache, error: error.message };
+  }
+  renderModelLists();
+}
+
+async function refreshModels() {
+  refreshModelsButton.disabled = true;
+  refreshModelsFromChatButton.disabled = true;
+  modelSummary.textContent = "正在刷新 OpenRouter 免费模型列表...";
+
+  try {
+    const response = await fetch("/api/models/refresh", { method: "POST" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    modelCache = data;
+    writeStoredModelCache();
+  } catch (error) {
+    modelCache = { ...modelCache, error: error.message };
+  } finally {
+    refreshModelsButton.disabled = false;
+    refreshModelsFromChatButton.disabled = false;
+    renderModelLists();
+  }
+}
+
+function applyServerKeyStatuses(serverKeys = []) {
+  for (const item of serverKeys) {
+    const key = Number.isInteger(item.id) ? apiKeys[item.id] : "";
+    if (!key) continue;
+    if (item.status === "daily-limited") {
+      markApiKeyDailyLimited(key);
+      const free = freeInfoForKey(key);
+      if (free) {
+        free.remaining = 0;
+        apiKeyInfo[key].freeModels = free;
+        writeStoredApiKeyInfo();
+      }
+    }
+  }
+}
+
 function renderApiKeys(serverKeys = null) {
   refreshDailyKeyState();
   apiKeyList.innerHTML = "";
@@ -357,7 +566,7 @@ function renderApiKeys(serverKeys = null) {
           index,
           label: maskApiKey(key),
           status: limit?.status || serverState?.status || "ready",
-          resetText: limit?.resetAt ? `Resets ${formatBeijingReset(limit.resetAt)}` : "",
+          resetText: limit?.resetAt ? `刷新 ${formatBeijingReset(limit.resetAt)}` : "",
           removable: true
         };
       })
@@ -371,7 +580,7 @@ function renderApiKeys(serverKeys = null) {
   if (!labels.length) {
     const empty = document.createElement("div");
     empty.className = "key-empty";
-    empty.textContent = "No keys added. Add keys here before starting a batch.";
+    empty.textContent = "还没有添加 key。请先添加 key，再开始聊天或批量生图。";
     apiKeyList.append(empty);
     updateKeyPoolSummary();
     return;
@@ -381,11 +590,11 @@ function renderApiKeys(serverKeys = null) {
   header.className = "key-row key-header";
   header.innerHTML = `
     <span>Key</span>
-    <span>Account</span>
-    <span>Total</span>
-    <span>Remaining</span>
-    <span>Status</span>
-    <span>Action</span>
+    <span>账户性质</span>
+    <span>总额度</span>
+    <span>剩余额度</span>
+    <span>状态</span>
+    <span>操作</span>
   `;
   apiKeyList.append(header);
 
@@ -399,7 +608,7 @@ function renderApiKeys(serverKeys = null) {
       <span>${totalQuotaForKey(key)}</span>
       <span>${remainingQuotaForKey(key)}</span>
       <strong>${item.status}</strong>
-      ${item.removable ? '<button type="button" aria-label="Remove API key">Remove</button>' : ""}
+      ${item.removable ? '<button type="button" aria-label="移除 API key">移除</button>' : ""}
     `;
     const removeButton = row.querySelector("button");
     removeButton?.addEventListener("click", () => {
@@ -425,13 +634,100 @@ function setState(label, className) {
 function updateProgress() {
   progressBar.max = Math.max(total, 1);
   progressBar.value = finished;
-  progressText.textContent = total ? `${finished} / ${total} complete` : "Waiting for tasks";
+  progressText.textContent = total ? `${finished} / ${total} 已完成` : "等待任务";
+}
+
+function renderChatMessages() {
+  chatMessagesEl.innerHTML = "";
+
+  if (!chatMessages.length) {
+    const empty = document.createElement("div");
+    empty.className = "chat-empty";
+    empty.textContent = "还没有消息。";
+    chatMessagesEl.append(empty);
+    return;
+  }
+
+  for (const message of chatMessages) {
+    const bubble = document.createElement("article");
+    bubble.className = `chat-message ${message.role}`;
+    const label = document.createElement("strong");
+    label.textContent = message.role === "user" ? "我" : "助手";
+    const body = document.createElement("p");
+    body.textContent = message.content;
+    bubble.append(label, body);
+    chatMessagesEl.append(bubble);
+  }
+
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+
+async function sendChat() {
+  if (activeChat) return;
+  const content = chatInput.value.trim();
+  if (!content) return;
+
+  const chatKeys = activeApiKeys();
+  if (!chatKeys.length) {
+    const message = apiKeys.length
+      ? "所有 API key 都已达到每日额度，等待下一个北京时间 08:00 刷新。"
+      : "请先到 key 池管理里添加至少一个 API key。";
+    setState("错误", "error");
+    chatKeySummary.textContent = message;
+    chatMessages.push({ role: "assistant", content: message });
+    writeStoredChatMessages();
+    renderChatMessages();
+    renderApiKeys();
+    return;
+  }
+
+  chatMessages.push({ role: "user", content });
+  chatInput.value = "";
+  writeStoredChatMessages();
+  renderChatMessages();
+  activeChat = true;
+  sendChatButton.disabled = true;
+  setState("聊天中", "running");
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: chatModelSelect.value || DEFAULT_TEXT_MODEL,
+        apiKeys: chatKeys,
+        messages: chatMessages.slice(-20),
+        retryMax: retryMaxInput.value,
+        retryDelaySeconds: retryDelaySecondsInput.value
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) throw Object.assign(new Error(data.error || response.statusText), { data });
+
+    applyServerKeyStatuses(data.apiKeys);
+    if (Number.isInteger(data.key?.id)) decrementEstimatedRemaining(chatKeys[data.key.id]);
+    chatMessages.push(data.message);
+    writeStoredChatMessages();
+    renderChatMessages();
+    renderApiKeys();
+    setState("就绪", "idle");
+  } catch (error) {
+    applyServerKeyStatuses(error.data?.apiKeys || []);
+    chatMessages.push({ role: "assistant", content: `错误：${error.message}` });
+    writeStoredChatMessages();
+    renderChatMessages();
+    renderApiKeys();
+    setState("错误", "error");
+  } finally {
+    activeChat = false;
+    sendChatButton.disabled = false;
+  }
 }
 
 function makeCard(index, prompt) {
   if (cards.has(index)) {
     startTaskTimer(index);
-    appendCardNote(index, "Reassigned to another available key.");
+    appendCardNote(index, "已重新分配给另一个可用 key。");
     return;
   }
 
@@ -440,7 +736,7 @@ function makeCard(index, prompt) {
   card.innerHTML = `
     <div class="preview"><div class="spinner" aria-label="loading"></div></div>
     <div class="card-body">
-      <div class="meta"><span>#${index + 1}</span><span>Running</span></div>
+      <div class="meta"><span>#${index + 1}</span><span>运行中</span></div>
       <div class="prompt"></div>
     </div>
   `;
@@ -497,19 +793,19 @@ function markKeyLimited(event) {
     }
   }
   renderApiKeys(event.apiKeys);
-  appendCardNote(event.index, `${event.key?.label || "API key"} hit a quota limit and was skipped.`);
+  appendCardNote(event.index, `${event.key?.label || "API key"} 已达到额度限制，已跳过。`);
 }
 
 async function refreshQuota() {
   absorbPendingApiKeys();
 
   if (!apiKeys.length) {
-    progressText.textContent = "Add at least one key before checking quota";
+    progressText.textContent = "请先添加至少一个 key，再刷新额度";
     return;
   }
 
   refreshQuotaButton.disabled = true;
-  progressText.textContent = "Checking key quota...";
+  progressText.textContent = "正在检查 key 额度...";
 
   try {
     const response = await fetch("/api/key-info", {
@@ -538,7 +834,7 @@ async function refreshQuota() {
 
     writeStoredApiKeyInfo();
     renderApiKeys();
-    progressText.textContent = "Quota refreshed";
+    progressText.textContent = "额度已刷新";
   } catch (error) {
     progressText.textContent = error.message;
   } finally {
@@ -564,7 +860,7 @@ function markDone(event) {
   if (saved?.filename) {
     const savedLine = document.createElement("div");
     savedLine.className = "saved-path";
-    savedLine.textContent = `Saved: outputs/${saved.filename}`;
+    savedLine.textContent = `已保存：outputs/${saved.filename}`;
     card.querySelector(".card-body").append(savedLine);
   }
 
@@ -573,7 +869,7 @@ function markDone(event) {
   link.href = imageUrl;
   link.target = "_blank";
   link.rel = "noreferrer";
-  link.textContent = "Open image";
+  link.textContent = "打开图片";
   card.querySelector(".card-body").append(link);
 }
 
@@ -587,7 +883,7 @@ function markError(event) {
     renderApiKeys();
   }
 
-  card.querySelector(".preview").innerHTML = `<div class="error-text">Request failed</div>`;
+  card.querySelector(".preview").innerHTML = `<div class="error-text">请求失败</div>`;
   card.querySelector(".meta span:last-child").textContent = `${Math.round(event.durationMs / 1000)}s`;
   const error = document.createElement("div");
   error.className = "error-text";
@@ -602,10 +898,10 @@ async function runBatch() {
   currentBatchKeys = activeApiKeys();
 
   if (!currentBatchKeys.length) {
-    setState("Error", "error");
+    setState("错误", "error");
     progressText.textContent = apiKeys.length
-      ? "All API keys are daily-limited until the next Beijing 08:00 reset."
-      : "Add at least one API key to the key pool first.";
+      ? "所有 API key 都已达到每日额度，等待下一个北京时间 08:00 刷新。"
+      : "请先到 key 池管理里添加至少一个 API key。";
     renderApiKeys();
     return;
   }
@@ -618,13 +914,14 @@ async function runBatch() {
   updateProgress();
   activeRun = true;
   runButton.disabled = true;
-  setState("Running", "running");
+  setState("运行中", "running");
 
   try {
     const response = await fetch("/api/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        model: imageModelSelect.value || DEFAULT_IMAGE_MODEL,
         prompt: promptInput.value,
         promptList: promptListInput.value,
         apiKeys: currentBatchKeys,
@@ -664,11 +961,10 @@ async function runBatch() {
           finished = 0;
           renderApiKeys(event.apiKeys);
           updateProgress();
+          progressText.textContent = `正在使用 ${event.model}`;
         }
 
-        if (event.type === "task-start") {
-          makeCard(event.index, event.prompt);
-        }
+        if (event.type === "task-start") makeCard(event.index, event.prompt);
 
         if (event.type === "task-done") {
           finished += 1;
@@ -676,23 +972,18 @@ async function runBatch() {
           updateProgress();
         }
 
-        if (event.type === "task-key") {
-          appendCardNote(event.index, `Using ${event.key.label}`);
-        }
-
-        if (event.type === "key-limited") {
-          markKeyLimited(event);
-        }
+        if (event.type === "task-key") appendCardNote(event.index, `使用 ${event.key.label}`);
+        if (event.type === "key-limited") markKeyLimited(event);
 
         if (event.type === "task-retry") {
           const seconds = Math.round(event.waitMs / 1000);
           const reason = event.error ? ` ${String(event.error).slice(0, 160)}` : "";
-          setCardStatus(event.index, `Retry ${event.nextAttempt}/${event.maxAttempts}`);
-          appendCardNote(event.index, `Request interrupted. Retrying in ${seconds}s.${reason}`);
+          setCardStatus(event.index, `重试 ${event.nextAttempt}/${event.maxAttempts}`);
+          appendCardNote(event.index, `请求中断，${seconds} 秒后重试。${reason}`);
         }
 
         if (event.type === "task-wait") {
-          progressText.textContent = `Queue wait: ${Math.round(event.waitMs / 1000)}s before next request`;
+          progressText.textContent = `队列等待：${Math.round(event.waitMs / 1000)} 秒后发起下一次请求`;
         }
 
         if (event.type === "task-error") {
@@ -708,9 +999,10 @@ async function runBatch() {
       }
     }
 
-    setState("Ready", "idle");
+    setState("就绪", "idle");
+    loadModels();
   } catch (error) {
-    setState("Error", "error");
+    setState("错误", "error");
     progressText.textContent = error.message;
   } finally {
     activeRun = false;
@@ -721,7 +1013,7 @@ async function runBatch() {
 function syncQueueControls() {
   const queueEnabled = queueModeInput.checked;
   concurrencyInput.disabled = queueEnabled;
-  concurrencyInput.title = queueEnabled ? "Queue mode forces per-key concurrency to 1." : "";
+  concurrencyInput.title = queueEnabled ? "队列模式会把每 key 并发固定为 1。" : "";
 }
 
 function showView(viewId) {
@@ -734,6 +1026,19 @@ function showView(viewId) {
   }
 }
 
+sendChatButton.addEventListener("click", sendChat);
+chatInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    sendChat();
+  }
+});
+clearChatButton.addEventListener("click", () => {
+  chatMessages = [];
+  writeStoredChatMessages();
+  renderChatMessages();
+});
+refreshModelsFromChatButton.addEventListener("click", refreshModels);
 runButton.addEventListener("click", runBatch);
 clearButton.addEventListener("click", () => {
   for (const index of taskTimers.keys()) stopTaskTimer(index);
@@ -742,13 +1047,13 @@ clearButton.addEventListener("click", () => {
   total = 0;
   finished = 0;
   updateProgress();
-  setState("Ready", "idle");
+  setState("就绪", "idle");
 });
 
 saveTemplateButton.addEventListener("click", () => {
   const name = templateNameInput.value.trim();
   if (!name) {
-    progressText.textContent = "Enter a template name first";
+    progressText.textContent = "请先输入模板名称";
     return;
   }
 
@@ -756,7 +1061,7 @@ saveTemplateButton.addEventListener("click", () => {
   templates[name] = currentTemplatePayload();
   writeTemplates(templates);
   refreshTemplates(name);
-  progressText.textContent = `Template saved: ${name}`;
+  progressText.textContent = `模板已保存：${name}`;
 });
 
 loadTemplateButton.addEventListener("click", () => {
@@ -766,7 +1071,7 @@ loadTemplateButton.addEventListener("click", () => {
 
   applyTemplate(templates[name]);
   templateNameInput.value = name;
-  progressText.textContent = `Template loaded: ${name}`;
+  progressText.textContent = `模板已载入：${name}`;
 });
 
 deleteTemplateButton.addEventListener("click", () => {
@@ -777,7 +1082,7 @@ deleteTemplateButton.addEventListener("click", () => {
   delete templates[name];
   writeTemplates(templates);
   refreshTemplates();
-  progressText.textContent = `Template deleted: ${name}`;
+  progressText.textContent = `模板已删除：${name}`;
 });
 
 queueModeInput.addEventListener("change", syncQueueControls);
@@ -786,7 +1091,7 @@ viewTabs.forEach((tab) => {
 });
 addApiKeyButton.addEventListener("click", () => {
   const added = absorbPendingApiKeys();
-  progressText.textContent = added ? `${added} key(s) added to the pool` : "Paste at least one key first";
+  progressText.textContent = added ? `已添加 ${added} 个 key 到 key 池` : "请先粘贴至少一个 key";
   if (added) refreshQuota();
 });
 
@@ -794,7 +1099,7 @@ apiKeyInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
     const added = absorbPendingApiKeys();
-    progressText.textContent = added ? `${added} key(s) added to the pool` : "Paste at least one key first";
+    progressText.textContent = added ? `已添加 ${added} 个 key 到 key 池` : "请先粘贴至少一个 key";
   }
 });
 
@@ -811,11 +1116,15 @@ clearApiKeysButton.addEventListener("click", () => {
 });
 
 refreshQuotaButton.addEventListener("click", refreshQuota);
+refreshModelsButton.addEventListener("click", refreshModels);
 
 refreshTemplates();
 syncQueueControls();
+renderModelLists();
+renderChatMessages();
 renderApiKeys();
 updateProgress();
+loadModels();
 
 setInterval(() => {
   if (refreshDailyKeyState()) renderApiKeys();

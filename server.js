@@ -20,18 +20,21 @@ function loadLocalEnv() {
       if (key && process.env[key] === undefined) process.env[key] = value;
     }
   } catch {
-    // A local .env file is optional.
+    // A local .env file is optional and is not used for API key fallback.
   }
 }
 
 loadLocalEnv();
 
 const PORT = Number(process.env.PORT || 3000);
-const MODEL = "sourceful/riverflow-v2.5-pro:free";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const PUBLIC_DIR = join(process.cwd(), "public");
 const OUTPUT_DIR = join(process.cwd(), "outputs");
 const CURL_COMMAND = process.platform === "win32" ? "curl.exe" : "curl";
+
+const DEFAULT_IMAGE_MODEL = "sourceful/riverflow-v2.5-pro:free";
+const DEFAULT_TEXT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -44,6 +47,8 @@ const mimeTypes = {
   ".webp": "image/webp",
   ".svg": "image/svg+xml"
 };
+
+let modelCache = createSeedModelCache();
 
 function sendJson(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -81,6 +86,14 @@ function sleep(ms, signal) {
       { once: true }
     );
   });
+}
+
+function parseJsonResponse(text) {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { raw: text };
+  }
 }
 
 function buildPrompts({ prompt, promptList, count }) {
@@ -166,6 +179,180 @@ function createKeyPool(apiKeys) {
   return { activeKeys, hasActiveKeys, nextActiveKey, markDailyLimited, markRateLimited, snapshot };
 }
 
+function createSeedModelCache() {
+  const now = Date.now();
+  const models = [
+    {
+      id: DEFAULT_TEXT_MODEL,
+      name: "NVIDIA: Nemotron 3 Ultra (free)",
+      type: "text",
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      supportedParameters: ["max_tokens", "temperature"],
+      pricing: { prompt: "0", completion: "0" },
+      status: "seeded",
+      lastError: "",
+      source: "seed",
+      updatedAt: now
+    },
+    {
+      id: DEFAULT_IMAGE_MODEL,
+      name: "Sourceful: Riverflow v2.5 Pro (free)",
+      type: "image",
+      inputModalities: ["text"],
+      outputModalities: ["image"],
+      supportedParameters: ["image_config"],
+      pricing: { image: "0" },
+      status: "seeded",
+      lastError: "",
+      source: "seed",
+      updatedAt: now
+    },
+    {
+      id: "sourceful/riverflow-v2.5-fast:free",
+      name: "Sourceful: Riverflow v2.5 Fast (free)",
+      type: "image",
+      inputModalities: ["text"],
+      outputModalities: ["image"],
+      supportedParameters: ["image_config"],
+      pricing: { image: "0" },
+      status: "seeded",
+      lastError: "",
+      source: "seed",
+      updatedAt: now
+    }
+  ];
+
+  return {
+    models,
+    text: models.filter((model) => model.type === "text" || model.type === "mixed"),
+    image: models.filter((model) => model.type === "image" || model.type === "mixed"),
+    refreshedAt: 0,
+    source: "seed",
+    error: ""
+  };
+}
+
+function numericPrice(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function isFreeOpenRouterModel(model) {
+  if (String(model?.id || "").endsWith(":free")) return true;
+  const pricing = model?.pricing || {};
+  const values = Object.values(pricing).filter((value) => value !== null && value !== undefined);
+  return values.length > 0 && values.every((value) => numericPrice(value) === 0);
+}
+
+function normalizeOpenRouterModel(model) {
+  const id = String(model?.id || "").trim();
+  if (!id || !isFreeOpenRouterModel(model)) return null;
+
+  const architecture = model?.architecture || {};
+  const outputModalities = Array.isArray(architecture.output_modalities) ? architecture.output_modalities : [];
+  const inputModalities = Array.isArray(architecture.input_modalities) ? architecture.input_modalities : [];
+  const supportedParameters = Array.isArray(model?.supported_parameters) ? model.supported_parameters : [];
+  const hasImage = outputModalities.includes("image");
+  const hasText = outputModalities.includes("text") || !outputModalities.length;
+  const type = hasImage && hasText ? "mixed" : hasImage ? "image" : "text";
+
+  if (!hasImage && !hasText) return null;
+
+  return {
+    id,
+    name: model?.name || id,
+    type,
+    inputModalities: inputModalities.length ? inputModalities : ["text"],
+    outputModalities: outputModalities.length ? outputModalities : ["text"],
+    supportedParameters,
+    pricing: model?.pricing || {},
+    contextLength: model?.context_length || null,
+    topProvider: model?.top_provider || null,
+    status: "unknown",
+    lastError: "",
+    source: "openrouter",
+    updatedAt: Date.now()
+  };
+}
+
+function mergeModelLists(nextModels) {
+  const currentById = new Map(modelCache.models.map((model) => [model.id, model]));
+  const merged = new Map();
+
+  for (const model of createSeedModelCache().models) {
+    merged.set(model.id, { ...model, ...(currentById.get(model.id) || {}) });
+  }
+
+  for (const model of nextModels) {
+    const previous = currentById.get(model.id);
+    merged.set(model.id, {
+      ...model,
+      status: previous?.status || model.status,
+      lastError: previous?.lastError || model.lastError,
+      updatedAt: Date.now()
+    });
+  }
+
+  const models = [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return {
+    models,
+    text: models.filter((model) => model.type === "text" || model.type === "mixed"),
+    image: models.filter((model) => model.type === "image" || model.type === "mixed"),
+    refreshedAt: Date.now(),
+    source: "openrouter",
+    error: ""
+  };
+}
+
+function getModelInfo(modelId, fallbackType = "text") {
+  const id = String(modelId || "").trim();
+  return modelCache.models.find((model) => model.id === id) || {
+    id: id || (fallbackType === "image" ? DEFAULT_IMAGE_MODEL : DEFAULT_TEXT_MODEL),
+    name: id || (fallbackType === "image" ? DEFAULT_IMAGE_MODEL : DEFAULT_TEXT_MODEL),
+    type: fallbackType,
+    inputModalities: ["text"],
+    outputModalities: fallbackType === "image" ? ["image"] : ["text"],
+    supportedParameters: [],
+    pricing: {},
+    status: "unknown",
+    lastError: "",
+    source: "custom",
+    updatedAt: Date.now()
+  };
+}
+
+function updateModelHealth(modelId, status, error = "") {
+  const model = modelCache.models.find((item) => item.id === modelId);
+  if (!model) return;
+  model.status = status;
+  model.lastError = String(error || "").slice(0, 240);
+  model.updatedAt = Date.now();
+}
+
+function publicModelCache() {
+  return {
+    ...modelCache,
+    counts: {
+      all: modelCache.models.length,
+      text: modelCache.text.length,
+      image: modelCache.image.length
+    }
+  };
+}
+
+function buildImageConfig({ aspectRatio, imageSize }) {
+  const imageConfig = {};
+  if (aspectRatio && aspectRatio !== "auto") imageConfig.aspect_ratio = aspectRatio;
+  if (imageSize && imageSize !== "auto") imageConfig.image_size = imageSize;
+  return Object.keys(imageConfig).length ? imageConfig : undefined;
+}
+
+function modelSupportsParameter(modelInfo, parameter) {
+  const supported = modelInfo?.supportedParameters || [];
+  return !supported.length || supported.includes(parameter);
+}
+
 function extractImages(openRouterResponse) {
   const message = openRouterResponse?.choices?.[0]?.message;
   const images = Array.isArray(message?.images) ? message.images : [];
@@ -177,13 +364,6 @@ function extractImages(openRouterResponse) {
   const fallbackUrls = content.match(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+|https?:\/\/\S+\.(?:png|jpe?g|webp)(?:\?\S*)?/gi) || [];
 
   return [...imageUrls, ...fallbackUrls];
-}
-
-function buildImageConfig({ aspectRatio, imageSize }) {
-  const imageConfig = {};
-  if (aspectRatio && aspectRatio !== "auto") imageConfig.aspect_ratio = aspectRatio;
-  if (imageSize && imageSize !== "auto") imageConfig.image_size = imageSize;
-  return Object.keys(imageConfig).length ? imageConfig : undefined;
 }
 
 async function saveDataImage(dataUrl, index) {
@@ -216,51 +396,6 @@ async function saveImages(images) {
   return saved;
 }
 
-async function generateImage({ prompt, options, apiKey, signal }) {
-  apiKey = String(apiKey || "").trim();
-  if (!apiKey) {
-    throw new Error("Missing API key. Add at least one key to the page key pool.");
-  }
-
-  const imageConfig = buildImageConfig(options || {});
-  const requestBody = {
-    model: MODEL,
-    messages: [{ role: "user", content: prompt }],
-    modalities: ["image"]
-  };
-
-  if (imageConfig) requestBody.image_config = imageConfig;
-
-  const { status, text } = await requestOpenRouter({
-    apiKey,
-    signal,
-    body: requestBody
-  });
-
-  const data = parseJsonResponse(text);
-
-  if (status < 200 || status >= 300) {
-    const detail = data?.error?.message || data?.message || text || "Request failed";
-    throw new Error(`OpenRouter ${status}: ${detail}`);
-  }
-
-  const images = extractImages(data);
-  const textContent = data?.choices?.[0]?.message?.content || "";
-  if (!images.length) {
-    const reason = data?.choices?.[0]?.finish_reason ? ` finish_reason=${data.choices[0].finish_reason}.` : "";
-    throw new Error(textContent || `OpenRouter returned no image URLs for this request.${reason}`);
-  }
-
-  const savedImages = await saveImages(images);
-
-  return {
-    images: savedImages.map((image) => image.url),
-    originalImages: savedImages.map((image) => image.original),
-    savedImages,
-    text: textContent
-  };
-}
-
 function isRateLimitError(error) {
   return String(error?.message || error).includes("OpenRouter 429:");
 }
@@ -282,41 +417,85 @@ function isChargedOpenRouterError(error) {
   return message.includes("OpenRouter returned no image URLs") || /OpenRouter\s+4\d\d:/.test(message);
 }
 
-async function generateImageWithRetry({ prompt, options, keyEntry, retryMax, retryDelayMs, signal, onRetry, onKeyUse }) {
-  let attempt = 0;
-
-  while (true) {
-    attempt += 1;
-    onKeyUse?.(keyEntry);
-
-    try {
-      return await generateImage({ prompt, options, apiKey: keyEntry.key, signal });
-    } catch (error) {
-      const shouldRetry = isRetryableError(error) && attempt <= retryMax;
-      if (!shouldRetry) throw error;
-
-      onRetry?.({
-        attempt,
-        nextAttempt: attempt + 1,
-        maxAttempts: retryMax + 1,
-        waitMs: retryDelayMs,
-        error: error?.message || String(error)
-      });
-      await sleep(retryDelayMs, signal);
-    }
-  }
-}
-
-function parseJsonResponse(text) {
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return { raw: text };
-  }
-}
-
 function freeDailyLimitForKeyInfo(data) {
   return data?.is_free_tier ? 50 : 1000;
+}
+
+async function requestOpenRouterModels(signal) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(
+      CURL_COMMAND,
+      [
+        "-sS",
+        "-X",
+        "GET",
+        OPENROUTER_MODELS_URL,
+        "-H",
+        "Accept-Encoding: identity",
+        "-o",
+        "-",
+        "-w",
+        "\n__OPENROUTER_STATUS__:%{http_code}",
+        "--max-time",
+        "45"
+      ],
+      { windowsHide: true }
+    );
+
+    const stdout = [];
+    const stderr = [];
+    let settled = false;
+
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve(result);
+    };
+
+    const abort = () => {
+      child.kill();
+      finish(new Error("Request aborted."));
+    };
+
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+
+    signal?.addEventListener("abort", abort, { once: true });
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", (error) => finish(error));
+    child.on("close", (code) => {
+      signal?.removeEventListener("abort", abort);
+      const output = Buffer.concat(stdout).toString("utf8");
+      const errorOutput = Buffer.concat(stderr).toString("utf8").trim();
+      const marker = "\n__OPENROUTER_STATUS__:";
+      const markerIndex = output.lastIndexOf(marker);
+
+      if (markerIndex === -1) {
+        finish(new Error(errorOutput || `curl exited with code ${code}`));
+        return;
+      }
+
+      const text = output.slice(0, markerIndex);
+      const status = Number(output.slice(markerIndex + marker.length).trim());
+      const data = parseJsonResponse(text);
+
+      if (code !== 0) {
+        finish(new Error(errorOutput || `curl exited with code ${code}`));
+        return;
+      }
+
+      if (status < 200 || status >= 300) {
+        finish(new Error(data?.error?.message || data?.message || `OpenRouter ${status}`));
+        return;
+      }
+
+      finish(null, data);
+    });
+  });
 }
 
 async function requestOpenRouterKeyInfo(apiKey, signal) {
@@ -365,7 +544,6 @@ async function requestOpenRouterKeyInfo(apiKey, signal) {
     }
 
     signal?.addEventListener("abort", abort, { once: true });
-
     child.stdout.on("data", (chunk) => stdout.push(chunk));
     child.stderr.on("data", (chunk) => stderr.push(chunk));
     child.on("error", (error) => finish(error));
@@ -407,8 +585,8 @@ async function requestOpenRouterKeyInfo(apiKey, signal) {
   });
 }
 
-async function requestOpenRouter({ apiKey, body, signal }) {
-  const bodyPath = join(tmpdir(), `riverflow-${randomUUID()}.json`);
+async function requestOpenRouter({ apiKey, body, signal, maxTime = 300 }) {
+  const bodyPath = join(tmpdir(), `openrouter-gateway-${randomUUID()}.json`);
   await writeFile(bodyPath, JSON.stringify(body), "utf8");
 
   try {
@@ -427,7 +605,7 @@ async function requestOpenRouter({ apiKey, body, signal }) {
           "-w",
           "\n__OPENROUTER_STATUS__:%{http_code}",
           "--max-time",
-          "300"
+          String(maxTime)
         ],
         { windowsHide: true }
       );
@@ -454,37 +632,36 @@ async function requestOpenRouter({ apiKey, body, signal }) {
       }
 
       signal?.addEventListener("abort", abort, { once: true });
-
       child.stdout.on("data", (chunk) => stdout.push(chunk));
       child.stderr.on("data", (chunk) => stderr.push(chunk));
       child.on("error", (error) => finish(error));
       child.on("close", (code) => {
         signal?.removeEventListener("abort", abort);
-      const output = Buffer.concat(stdout).toString("utf8");
-      const errorOutput = Buffer.concat(stderr).toString("utf8").trim();
-      const marker = "\n__OPENROUTER_STATUS__:";
-      const markerIndex = output.lastIndexOf(marker);
+        const output = Buffer.concat(stdout).toString("utf8");
+        const errorOutput = Buffer.concat(stderr).toString("utf8").trim();
+        const marker = "\n__OPENROUTER_STATUS__:";
+        const markerIndex = output.lastIndexOf(marker);
 
-      if (markerIndex === -1) {
-        if (output && !output.trim() && /Operation timed out|server closed abruptly/i.test(errorOutput)) {
-          finish(new Error("OpenRouter provider returned an empty unfinished response. No image data was received."));
+        if (markerIndex === -1) {
+          if (output && !output.trim() && /Operation timed out|server closed abruptly/i.test(errorOutput)) {
+            finish(new Error("OpenRouter provider returned an empty unfinished response. No image data was received."));
+            return;
+          }
+          finish(new Error(errorOutput || `curl exited with code ${code}`));
           return;
         }
-        finish(new Error(errorOutput || `curl exited with code ${code}`));
-        return;
-      }
 
-      const text = output.slice(0, markerIndex);
-      const status = Number(output.slice(markerIndex + marker.length).trim());
+        const text = output.slice(0, markerIndex);
+        const status = Number(output.slice(markerIndex + marker.length).trim());
 
-      if (code !== 0) {
-        if (status === 200 && !text.trim() && /Operation timed out|server closed abruptly/i.test(errorOutput)) {
-          finish(new Error("OpenRouter provider returned an empty unfinished response. No image data was received."));
+        if (code !== 0) {
+          if (status === 200 && !text.trim() && /Operation timed out|server closed abruptly/i.test(errorOutput)) {
+            finish(new Error("OpenRouter provider returned an empty unfinished response. No image data was received."));
+            return;
+          }
+          finish(new Error(errorOutput || `curl exited with code ${code}`));
           return;
         }
-        finish(new Error(errorOutput || `curl exited with code ${code}`));
-        return;
-      }
 
         finish(null, { status, text });
       });
@@ -494,7 +671,7 @@ async function requestOpenRouter({ apiKey, body, signal }) {
         'header = "Accept-Encoding: identity"',
         `header = "Authorization: Bearer ${apiKey}"`,
         'header = "HTTP-Referer: http://localhost"',
-        'header = "X-Title: Riverflow Batch Generator"',
+        'header = "X-Title: OpenRouter Free Models Gateway"',
         `data-binary = "@${bodyPath.replace(/\\/g, "/")}"`
       ].join("\n");
 
@@ -503,6 +680,163 @@ async function requestOpenRouter({ apiKey, body, signal }) {
   } finally {
     await unlink(bodyPath).catch(() => {});
   }
+}
+
+async function refreshOpenRouterModels(signal) {
+  const data = await requestOpenRouterModels(signal);
+  const nextModels = (Array.isArray(data?.data) ? data.data : [])
+    .map(normalizeOpenRouterModel)
+    .filter(Boolean);
+  modelCache = mergeModelLists(nextModels);
+  return publicModelCache();
+}
+
+async function generateImage({ prompt, options, apiKey, signal }) {
+  apiKey = String(apiKey || "").trim();
+  if (!apiKey) {
+    throw new Error("Missing API key. Add at least one key to the page key pool.");
+  }
+
+  const modelInfo = getModelInfo(options?.model || DEFAULT_IMAGE_MODEL, "image");
+  const imageConfig = buildImageConfig(options || {});
+  const requestBody = {
+    model: modelInfo.id,
+    messages: [{ role: "user", content: prompt }],
+    modalities: ["image"]
+  };
+
+  if (imageConfig && modelSupportsParameter(modelInfo, "image_config")) {
+    requestBody.image_config = imageConfig;
+  }
+
+  const { status, text } = await requestOpenRouter({
+    apiKey,
+    signal,
+    body: requestBody,
+    maxTime: 300
+  });
+
+  const data = parseJsonResponse(text);
+
+  if (status < 200 || status >= 300) {
+    const detail = data?.error?.message || data?.message || text || "Request failed";
+    updateModelHealth(modelInfo.id, status === 429 ? "rate-limited" : "error", detail);
+    throw new Error(`OpenRouter ${status}: ${detail}`);
+  }
+
+  const images = extractImages(data);
+  const textContent = data?.choices?.[0]?.message?.content || "";
+  if (!images.length) {
+    const reason = data?.choices?.[0]?.finish_reason ? ` finish_reason=${data.choices[0].finish_reason}.` : "";
+    const message = textContent || `OpenRouter returned no image URLs for this request.${reason}`;
+    updateModelHealth(modelInfo.id, "no-image", message);
+    throw new Error(message);
+  }
+
+  const savedImages = await saveImages(images);
+  updateModelHealth(modelInfo.id, "ok");
+
+  return {
+    images: savedImages.map((image) => image.url),
+    originalImages: savedImages.map((image) => image.original),
+    savedImages,
+    text: textContent,
+    model: modelInfo.id
+  };
+}
+
+async function generateText({ messages, options, apiKey, signal }) {
+  apiKey = String(apiKey || "").trim();
+  if (!apiKey) {
+    throw new Error("Missing API key. Add at least one key to the page key pool.");
+  }
+
+  const modelInfo = getModelInfo(options?.model || DEFAULT_TEXT_MODEL, "text");
+  const requestBody = {
+    model: modelInfo.id,
+    messages
+  };
+
+  if (options?.maxTokens) requestBody.max_tokens = clamp(options.maxTokens, 1, 8192);
+  if (options?.temperature !== "" && options?.temperature !== undefined) {
+    const temperature = Number(options.temperature);
+    if (Number.isFinite(temperature)) requestBody.temperature = temperature;
+  }
+
+  const { status, text } = await requestOpenRouter({
+    apiKey,
+    signal,
+    body: requestBody,
+    maxTime: 120
+  });
+  const data = parseJsonResponse(text);
+
+  if (status < 200 || status >= 300) {
+    const detail = data?.error?.message || data?.message || text || "Request failed";
+    updateModelHealth(modelInfo.id, status === 429 ? "rate-limited" : "error", detail);
+    throw new Error(`OpenRouter ${status}: ${detail}`);
+  }
+
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string") {
+    const message = "OpenRouter returned no assistant text for this request.";
+    updateModelHealth(modelInfo.id, "no-text", message);
+    throw new Error(message);
+  }
+
+  updateModelHealth(modelInfo.id, "ok");
+  return {
+    message: { role: "assistant", content },
+    usage: data?.usage || null,
+    model: data?.model || modelInfo.id
+  };
+}
+
+async function withRetry({ action, keyEntry, retryMax, retryDelayMs, signal, onRetry, onKeyUse }) {
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+    onKeyUse?.(keyEntry);
+
+    try {
+      return await action();
+    } catch (error) {
+      const shouldRetry = isRetryableError(error) && attempt <= retryMax;
+      if (!shouldRetry) throw error;
+
+      onRetry?.({
+        attempt,
+        nextAttempt: attempt + 1,
+        maxAttempts: retryMax + 1,
+        waitMs: retryDelayMs,
+        error: error?.message || String(error)
+      });
+      await sleep(retryDelayMs, signal);
+    }
+  }
+}
+
+async function handleModels(req, res) {
+  if (req.method === "GET") {
+    sendJson(res, 200, publicModelCache());
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/models/refresh") {
+    const controller = new AbortController();
+    req.on("close", () => controller.abort());
+    try {
+      const models = await refreshOpenRouterModels(controller.signal);
+      sendJson(res, 200, models);
+    } catch (error) {
+      modelCache = { ...modelCache, error: error?.message || String(error) };
+      sendJson(res, 502, { ...publicModelCache(), error: error?.message || String(error) });
+    }
+    return;
+  }
+
+  sendJson(res, 405, { error: "Method not allowed" });
 }
 
 async function handleKeyInfo(req, res) {
@@ -564,6 +898,91 @@ async function handleKeyInfo(req, res) {
   sendJson(res, 200, { keys });
 }
 
+async function handleChat(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body." });
+    return;
+  }
+
+  const apiKeys = parseApiKeys(body);
+  const keyPool = createKeyPool(apiKeys);
+  const retryMax = clamp(body.retryMax ?? 2, 0, 10);
+  const retryDelayMs = clamp(body.retryDelaySeconds ?? 15, 5, 600) * 1000;
+  const model = String(body.model || DEFAULT_TEXT_MODEL).trim();
+  const messages = Array.isArray(body.messages)
+    ? body.messages
+        .filter((message) => message && typeof message.content === "string")
+        .map((message) => ({ role: message.role === "assistant" ? "assistant" : "user", content: message.content }))
+    : [];
+
+  if (!apiKeys.length) {
+    sendJson(res, 400, { error: "Add at least one API key to the page key pool before chatting." });
+    return;
+  }
+
+  if (!messages.length) {
+    sendJson(res, 400, { error: "Enter a chat message first." });
+    return;
+  }
+
+  const controller = new AbortController();
+  req.on("close", () => controller.abort());
+
+  while (keyPool.hasActiveKeys()) {
+    const keyEntry = keyPool.nextActiveKey();
+    const startedAt = Date.now();
+    try {
+      const result = await withRetry({
+        keyEntry,
+        retryMax,
+        retryDelayMs,
+        signal: controller.signal,
+        action: () => generateText({
+          messages,
+          options: {
+            model,
+            maxTokens: body.maxTokens,
+            temperature: body.temperature
+          },
+          apiKey: keyEntry.key,
+          signal: controller.signal
+        })
+      });
+
+      sendJson(res, 200, {
+        ...result,
+        durationMs: Date.now() - startedAt,
+        key: { id: keyEntry.id, label: keyEntry.label },
+        apiKeys: keyPool.snapshot()
+      });
+      return;
+    } catch (error) {
+      if (isRateLimitError(error)) {
+        if (isDailyRateLimitError(error)) keyPool.markDailyLimited(keyEntry, error);
+        else keyPool.markRateLimited(keyEntry, error);
+        continue;
+      }
+
+      sendJson(res, 502, {
+        error: error?.message || String(error),
+        charged: isChargedOpenRouterError(error),
+        durationMs: Date.now() - startedAt,
+        key: { id: keyEntry.id, label: keyEntry.label },
+        apiKeys: keyPool.snapshot()
+      });
+      return;
+    }
+  }
+
+  sendJson(res, 429, {
+    error: "All API keys are daily rate limited for free models.",
+    apiKeys: keyPool.snapshot()
+  });
+}
+
 async function handleBatch(req, res) {
   let body;
   try {
@@ -580,7 +999,9 @@ async function handleBatch(req, res) {
   const retryDelayMs = clamp(body.retryDelaySeconds ?? 70, 5, 600) * 1000;
   const prompts = buildPrompts({ ...body, count });
   const apiKeys = parseApiKeys(body);
+  const selectedModel = String(body.model || DEFAULT_IMAGE_MODEL).trim();
   const options = {
+    model: selectedModel,
     aspectRatio: String(body.aspectRatio || "auto"),
     imageSize: String(body.imageSize || "auto"),
     queueMode,
@@ -621,7 +1042,7 @@ async function handleBatch(req, res) {
     retryMax,
     retryDelayMs,
     apiKeys: keyPool.snapshot(),
-    model: MODEL
+    model: selectedModel
   });
 
   const pendingTasks = prompts.map((prompt, index) => ({ index, prompt }));
@@ -675,13 +1096,12 @@ async function handleBatch(req, res) {
 
       const startedAt = Date.now();
       try {
-        const result = await generateImageWithRetry({
-          prompt,
-          options,
+        const result = await withRetry({
           keyEntry,
           retryMax,
           retryDelayMs,
           signal: controller.signal,
+          action: () => generateImage({ prompt, options, apiKey: keyEntry.key, signal: controller.signal }),
           onRetry: (retry) => writeEvent({ type: "task-retry", index, prompt, key: { id: keyEntry.id, label: keyEntry.label }, ...retry }),
           onKeyUse: (key) => writeEvent({ type: "task-key", index, key: { id: key.id, label: key.label } })
         });
@@ -707,6 +1127,7 @@ async function handleBatch(req, res) {
             error: error?.message || String(error)
           });
         } else {
+          if (/empty unfinished response/i.test(error?.message || "")) updateModelHealth(selectedModel, "provider-timeout", error.message);
           completed += 1;
           writeEvent({
             type: "task-error",
@@ -779,6 +1200,21 @@ async function serveOutput(req, res) {
 }
 
 const server = createServer(async (req, res) => {
+  if (req.method === "GET" && req.url === "/api/models") {
+    await handleModels(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/models/refresh") {
+    await handleModels(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/chat") {
+    await handleChat(req, res);
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/api/batch") {
     await handleBatch(req, res);
     return;
@@ -803,5 +1239,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Riverflow batch app running at http://localhost:${PORT}`);
+  console.log(`OpenRouter free models gateway running at http://localhost:${PORT}`);
 });

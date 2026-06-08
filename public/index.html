@@ -3,84 +3,122 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Riverflow Batch</title>
+    <title>OpenRouter Free Models Gateway</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <header class="app-header">
         <div>
-          <h1>Riverflow Batch</h1>
-          <p>sourceful/riverflow-v2.5-pro:free</p>
+          <h1>OpenRouter Free Models Gateway</h1>
+          <p>聊天、生图和免费模型路由</p>
         </div>
         <nav class="tabs" aria-label="Views">
-          <button id="generateTab" class="tab active" type="button" data-view="generateView">生图</button>
+          <button id="chatTab" class="tab active" type="button" data-view="chatView">聊天</button>
+          <button id="generateTab" class="tab" type="button" data-view="generateView">生图</button>
           <button id="keyPoolTab" class="tab" type="button" data-view="keyPoolView">key池管理</button>
+          <button id="modelManagerTab" class="tab" type="button" data-view="modelManagerView">模型管理</button>
         </nav>
-        <span id="serverState" class="status idle">Ready</span>
+        <span id="serverState" class="status idle">就绪</span>
       </header>
 
-      <section id="generateView" class="view active">
+      <section id="chatView" class="view active">
+        <section class="chat-workspace">
+          <div class="panel chat-panel">
+            <div class="title-row">
+              <div>
+                <h2>聊天</h2>
+                <p id="chatKeySummary">没有可用 key</p>
+              </div>
+              <button id="clearChatButton" type="button" class="secondary">清空</button>
+            </div>
+
+            <label class="field">
+              <span>语言模型</span>
+              <select id="chatModelSelect"></select>
+            </label>
+
+            <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+
+            <label class="field">
+              <span>消息</span>
+              <textarea id="chatInput" rows="4" placeholder="输入要发送给免费语言模型的问题"></textarea>
+            </label>
+
+            <div class="actions">
+              <button id="sendChatButton" type="button">发送</button>
+              <button id="refreshModelsFromChatButton" type="button" class="secondary">刷新模型</button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section id="generateView" class="view">
         <section class="workspace">
           <div class="panel controls">
             <div class="title-row">
               <div>
                 <h2>生图</h2>
-                <p id="keyPoolSummary">No ready keys</p>
+                <p id="keyPoolSummary">没有可用 key</p>
               </div>
             </div>
 
             <label class="field">
-              <span>Prompt</span>
-              <textarea id="prompt" rows="6" placeholder="Example: a cinematic product photo of a translucent glass teapot on a walnut table, morning light"></textarea>
+              <span>生图模型</span>
+              <select id="imageModelSelect"></select>
+            </label>
+
+            <label class="field">
+              <span>提示词</span>
+              <textarea id="prompt" rows="6" placeholder="示例：a cinematic product photo of a translucent glass teapot on a walnut table, morning light"></textarea>
             </label>
 
             <div class="template-row">
-              <input id="templateName" type="text" placeholder="Template name" />
-              <button id="saveTemplateButton" type="button" class="secondary">Save</button>
+              <input id="templateName" type="text" placeholder="模板名称" />
+              <button id="saveTemplateButton" type="button" class="secondary">保存</button>
             </div>
 
             <div class="template-row">
-              <select id="templateSelect" aria-label="Prompt templates"></select>
-              <button id="loadTemplateButton" type="button" class="secondary">Load</button>
-              <button id="deleteTemplateButton" type="button" class="secondary danger">Delete</button>
+              <select id="templateSelect" aria-label="提示词模板"></select>
+              <button id="loadTemplateButton" type="button" class="secondary">载入</button>
+              <button id="deleteTemplateButton" type="button" class="secondary danger">删除</button>
             </div>
 
             <label class="field">
-              <span>Prompt queue</span>
-              <textarea id="promptList" rows="7" placeholder="One prompt per line. When filled, this queue overrides request count."></textarea>
+              <span>提示词队列</span>
+              <textarea id="promptList" rows="7" placeholder="每行一个提示词。填写后会按队列数量覆盖请求总数。"></textarea>
             </label>
 
             <div class="grid-fields">
               <label class="field">
-                <span>Request count</span>
+                <span>请求总数</span>
                 <input id="count" type="number" min="1" max="24" value="4" />
               </label>
               <label class="field">
-                <span>Per-key concurrency</span>
+                <span>每 key 并发</span>
                 <input id="concurrency" type="number" min="1" max="8" value="3" />
               </label>
             </div>
 
             <label class="toggle-row">
               <input id="queueMode" type="checkbox" />
-              <span>Queue mode: force 1 per key and wait</span>
+              <span>队列模式：每个 key 固定 1 并发并等待</span>
             </label>
 
             <div class="grid-fields">
               <label class="field">
-                <span>Retry count</span>
+                <span>重试次数</span>
                 <input id="retryMax" type="number" min="0" max="10" value="3" />
               </label>
               <label class="field">
-                <span>Wait seconds</span>
+                <span>等待秒数</span>
                 <input id="retryDelaySeconds" type="number" min="5" max="600" value="70" />
               </label>
             </div>
 
             <div class="grid-fields">
               <label class="field">
-                <span>Image size</span>
+                <span>图片尺寸</span>
                 <select id="imageSize">
                   <option value="auto">Auto</option>
                   <option value="1K">1K</option>
@@ -89,7 +127,7 @@
                 </select>
               </label>
               <label class="field">
-                <span>Aspect ratio</span>
+                <span>宽高比</span>
                 <select id="aspectRatio">
                   <option value="auto">Auto</option>
                   <option value="1:1">1:1</option>
@@ -104,16 +142,16 @@
             </div>
 
             <div class="actions">
-              <button id="runButton" type="button">Start batch</button>
-              <button id="clearButton" type="button" class="secondary">Clear</button>
+              <button id="runButton" type="button">开始批量</button>
+              <button id="clearButton" type="button" class="secondary">清空</button>
             </div>
           </div>
 
           <div class="results-wrap">
             <div class="toolbar">
               <div>
-                <h2>Results</h2>
-                <p id="progressText">Waiting for tasks</p>
+                <h2>结果</h2>
+                <p id="progressText">等待任务</p>
               </div>
               <progress id="progressBar" max="1" value="0"></progress>
             </div>
@@ -128,23 +166,48 @@
             <div class="title-row">
               <div>
                 <h2>key池管理</h2>
-                <p>Manage local OpenRouter API keys and quota status.</p>
+                <p>管理本地 OpenRouter API key 和额度状态。</p>
               </div>
             </div>
 
             <label class="field">
-              <span>OpenRouter API keys</span>
-              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Paste one key, then add to pool" />
+              <span>OpenRouter API key</span>
+              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="粘贴一个 key 后加入 key 池" />
             </label>
 
             <div class="template-row">
-              <button id="addApiKeyButton" type="button" class="secondary">Add to key pool</button>
-              <button id="refreshQuotaButton" type="button" class="secondary">Refresh quota</button>
-              <button id="clearApiKeysButton" type="button" class="secondary danger">Clear keys</button>
+              <button id="addApiKeyButton" type="button" class="secondary">加入 key 池</button>
+              <button id="refreshQuotaButton" type="button" class="secondary">刷新额度</button>
+              <button id="clearApiKeysButton" type="button" class="secondary danger">清空 key</button>
             </div>
 
-            <textarea id="apiKeysBulk" class="compact-area" rows="5" placeholder="Or paste multiple keys here, one per line"></textarea>
+            <textarea id="apiKeysBulk" class="compact-area" rows="5" placeholder="也可以在这里批量粘贴多个 key，每行一个"></textarea>
             <div id="apiKeyList" class="key-list" aria-live="polite"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="modelManagerView" class="view">
+        <div class="model-page">
+          <section class="panel model-manager">
+            <div class="title-row">
+              <div>
+                <h2>模型管理</h2>
+                <p id="modelSummary">正在加载模型缓存</p>
+              </div>
+              <button id="refreshModelsButton" type="button" class="secondary">刷新免费模型</button>
+            </div>
+
+            <div class="model-grid">
+              <section>
+                <h3>文本模型</h3>
+                <div id="textModelList" class="model-list"></div>
+              </section>
+              <section>
+                <h3>生图模型</h3>
+                <div id="imageModelList" class="model-list"></div>
+              </section>
+            </div>
           </section>
         </div>
       </section>

@@ -8,7 +8,7 @@
 - Let chat choose a free language model.
 - Let image generation choose a free image model.
 - Keep API keys in browser localStorage for this local-only phase.
-- Record model health from real requests without spending quota on automatic probes.
+- Record and persist model health from real requests without spending quota on automatic probes.
 
 ## Phase 2: External API Gateway
 

@@ -31,6 +31,8 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const PUBLIC_DIR = join(process.cwd(), "public");
 const OUTPUT_DIR = join(process.cwd(), "outputs");
+const DATA_DIR = join(process.cwd(), "data");
+const MODEL_CACHE_FILE = join(DATA_DIR, "model-cache.json");
 const CURL_COMMAND = process.platform === "win32" ? "curl.exe" : "curl";
 
 const DEFAULT_IMAGE_MODEL = "sourceful/riverflow-v2.5-pro:free";
@@ -48,7 +50,8 @@ const mimeTypes = {
   ".svg": "image/svg+xml"
 };
 
-let modelCache = createSeedModelCache();
+let modelCache = readStoredModelCache();
+let modelCacheWriteTimer = null;
 
 function sendJson(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -233,6 +236,67 @@ function createSeedModelCache() {
   };
 }
 
+function rebuildModelGroups(cache) {
+  const models = Array.isArray(cache?.models) ? cache.models.filter((model) => model && typeof model.id === "string") : [];
+  return {
+    ...cache,
+    models,
+    text: models.filter((model) => model.type === "text" || model.type === "mixed"),
+    image: models.filter((model) => model.type === "image" || model.type === "mixed")
+  };
+}
+
+function normalizeStoredModelCache(cache) {
+  const seedCache = createSeedModelCache();
+  if (!cache || !Array.isArray(cache.models)) return seedCache;
+
+  const byId = new Map(seedCache.models.map((model) => [model.id, model]));
+  for (const model of cache.models) {
+    if (!model || typeof model.id !== "string" || !model.id.trim()) continue;
+    const previous = byId.get(model.id);
+    byId.set(model.id, {
+      ...(previous || {}),
+      ...model,
+      id: model.id.trim(),
+      status: model.status || previous?.status || "unknown",
+      lastError: String(model.lastError || previous?.lastError || "").slice(0, 240),
+      updatedAt: Number(model.updatedAt || previous?.updatedAt || Date.now())
+    });
+  }
+
+  return rebuildModelGroups({
+    models: [...byId.values()].sort((a, b) => a.id.localeCompare(b.id)),
+    refreshedAt: Number(cache.refreshedAt || 0),
+    source: cache.source || "disk",
+    error: cache.error || ""
+  });
+}
+
+function readStoredModelCache() {
+  try {
+    const raw = JSON.parse(readFileSync(MODEL_CACHE_FILE, "utf8"));
+    return normalizeStoredModelCache(raw);
+  } catch {
+    return createSeedModelCache();
+  }
+}
+
+async function persistModelCache() {
+  const payload = JSON.stringify(modelCache, null, 2);
+  await mkdir(DATA_DIR, { recursive: true });
+  await writeFile(MODEL_CACHE_FILE, `${payload}\n`, "utf8");
+}
+
+function scheduleModelCachePersist() {
+  if (modelCacheWriteTimer) return;
+  modelCacheWriteTimer = setTimeout(() => {
+    modelCacheWriteTimer = null;
+    persistModelCache().catch((error) => {
+      console.warn(`Could not persist model cache: ${error.message}`);
+    });
+  }, 250);
+}
+
 function numericPrice(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -322,12 +386,33 @@ function getModelInfo(modelId, fallbackType = "text") {
   };
 }
 
-function updateModelHealth(modelId, status, error = "") {
-  const model = modelCache.models.find((item) => item.id === modelId);
-  if (!model) return;
+function updateModelHealth(modelId, status, error = "", fallbackType = "text") {
+  const id = String(modelId || "").trim();
+  if (!id) return;
+
+  let model = modelCache.models.find((item) => item.id === id);
+  if (!model) {
+    model = {
+      id,
+      name: id,
+      type: fallbackType,
+      inputModalities: ["text"],
+      outputModalities: fallbackType === "image" ? ["image"] : ["text"],
+      supportedParameters: [],
+      pricing: {},
+      status: "unknown",
+      lastError: "",
+      source: "custom",
+      updatedAt: Date.now()
+    };
+    modelCache.models.push(model);
+  }
+
   model.status = status;
   model.lastError = String(error || "").slice(0, 240);
   model.updatedAt = Date.now();
+  modelCache = rebuildModelGroups({ ...modelCache, models: modelCache.models });
+  scheduleModelCachePersist();
 }
 
 function publicModelCache() {
@@ -414,7 +499,7 @@ function isRetryableError(error) {
 function isChargedOpenRouterError(error) {
   const message = String(error?.message || error);
   if (isRateLimitError(error) || isRetryableError(error)) return false;
-  return message.includes("OpenRouter returned no image URLs") || /OpenRouter\s+4\d\d:/.test(message);
+  return message.includes("OpenRouter returned no image URLs");
 }
 
 function freeDailyLimitForKeyInfo(data) {
@@ -688,6 +773,7 @@ async function refreshOpenRouterModels(signal) {
     .map(normalizeOpenRouterModel)
     .filter(Boolean);
   modelCache = mergeModelLists(nextModels);
+  await persistModelCache();
   return publicModelCache();
 }
 
@@ -720,7 +806,7 @@ async function generateImage({ prompt, options, apiKey, signal }) {
 
   if (status < 200 || status >= 300) {
     const detail = data?.error?.message || data?.message || text || "Request failed";
-    updateModelHealth(modelInfo.id, status === 429 ? "rate-limited" : "error", detail);
+    updateModelHealth(modelInfo.id, status === 429 ? "rate-limited" : "error", detail, "image");
     throw new Error(`OpenRouter ${status}: ${detail}`);
   }
 
@@ -729,12 +815,12 @@ async function generateImage({ prompt, options, apiKey, signal }) {
   if (!images.length) {
     const reason = data?.choices?.[0]?.finish_reason ? ` finish_reason=${data.choices[0].finish_reason}.` : "";
     const message = textContent || `OpenRouter returned no image URLs for this request.${reason}`;
-    updateModelHealth(modelInfo.id, "no-image", message);
+    updateModelHealth(modelInfo.id, "no-image", message, "image");
     throw new Error(message);
   }
 
   const savedImages = await saveImages(images);
-  updateModelHealth(modelInfo.id, "ok");
+  updateModelHealth(modelInfo.id, "ok", "", "image");
 
   return {
     images: savedImages.map((image) => image.url),
@@ -773,18 +859,18 @@ async function generateText({ messages, options, apiKey, signal }) {
 
   if (status < 200 || status >= 300) {
     const detail = data?.error?.message || data?.message || text || "Request failed";
-    updateModelHealth(modelInfo.id, status === 429 ? "rate-limited" : "error", detail);
+    updateModelHealth(modelInfo.id, status === 429 ? "rate-limited" : "error", detail, "text");
     throw new Error(`OpenRouter ${status}: ${detail}`);
   }
 
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== "string") {
     const message = "OpenRouter returned no assistant text for this request.";
-    updateModelHealth(modelInfo.id, "no-text", message);
+    updateModelHealth(modelInfo.id, "no-text", message, "text");
     throw new Error(message);
   }
 
-  updateModelHealth(modelInfo.id, "ok");
+  updateModelHealth(modelInfo.id, "ok", "", "text");
   return {
     message: { role: "assistant", content },
     usage: data?.usage || null,

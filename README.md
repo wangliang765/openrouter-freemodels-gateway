@@ -19,7 +19,7 @@ Open http://localhost:3000.
 - Use `本地数据` to export or import current settings, local prompt templates, model cache, chat history, and activity logs. Backups do not include API keys.
 - API keys in the page key pool are saved in browser localStorage and remain after refresh.
 - The app only uses keys currently shown in the page key pool. `.env` is not used as a fallback.
-- `模型管理` refreshes OpenRouter `/api/v1/models`, filters free models, and separates text and image models.
+- `模型管理` refreshes OpenRouter `/api/v1/models`, filters free models, separates text and image models, and can copy model IDs for testing.
 - Model metadata and request-derived health status are cached in local `data/model-cache.json`; this file is ignored by git.
 - Chat and image generation both use the selected model from the page dropdowns.
 - Running chat requests can be stopped manually from the page.

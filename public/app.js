@@ -749,6 +749,59 @@ function selectModelForUse(model, target) {
   setState("已选择生图模型", "idle");
 }
 
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the textarea fallback for browsers that expose but deny clipboard writes.
+    }
+  }
+
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.append(area);
+  area.select();
+  const copied = document.execCommand("copy");
+  area.remove();
+  if (!copied) throw new Error("Clipboard write failed.");
+}
+
+function selectElementText(element) {
+  if (!element) return;
+  const selection = window.getSelection?.();
+  if (!selection) return;
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function flashButtonLabel(button, label) {
+  const previous = button.textContent;
+  button.textContent = label;
+  button.disabled = true;
+  setTimeout(() => {
+    button.textContent = previous;
+    button.disabled = false;
+  }, 1200);
+}
+
+async function copyModelId(model, button, idElement) {
+  try {
+    await copyTextToClipboard(model.id);
+    flashButtonLabel(button, "已复制");
+  } catch (error) {
+    selectElementText(idElement);
+    flashButtonLabel(button, "已选中");
+    setState("已选中模型 ID", "idle");
+  }
+}
+
 function renderModelCard(model) {
   const div = document.createElement("div");
   div.className = `model-card ${model.status || "unknown"}`;
@@ -766,10 +819,18 @@ function renderModelCard(model) {
     ${model.lastError ? `<small class="model-error">${model.lastError}</small>` : ""}
   `;
   div.querySelector("strong").textContent = model.name || model.id;
-  div.querySelector("code").textContent = model.id;
+  const idElement = div.querySelector("code");
+  idElement.textContent = model.id;
 
   const actions = document.createElement("div");
   actions.className = "model-card-actions";
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "secondary";
+  copyButton.textContent = "复制 ID";
+  copyButton.addEventListener("click", () => copyModelId(model, copyButton, idElement));
+  actions.append(copyButton);
+
   if (model.type === "text" || model.type === "mixed") {
     const useChatButton = document.createElement("button");
     useChatButton.type = "button";

@@ -5,6 +5,7 @@
 - Add top-level views for chat, image generation, key pool management, and model management.
 - Pull OpenRouter model metadata from `/api/v1/models`.
 - Classify free models into text and image groups.
+- Allow model IDs to be copied directly from model management cards.
 - Let chat choose a free language model.
 - Allow running chat requests to be stopped from the local page.
 - Let image generation choose a free image model.

@@ -88,7 +88,7 @@ textarea {
 
 .key-page {
   display: grid;
-  grid-template-columns: minmax(320px, 760px);
+  grid-template-columns: minmax(320px, 1120px);
   justify-content: center;
 }
 
@@ -303,9 +303,9 @@ select:focus {
 
 .key-row {
   display: grid;
-  grid-template-columns: minmax(170px, 1.5fr) minmax(74px, 0.65fr) minmax(58px, 0.5fr) minmax(78px, 0.65fr) minmax(90px, 0.7fr) auto;
+  grid-template-columns: minmax(190px, 1.5fr) minmax(100px, 0.75fr) minmax(86px, 0.6fr) minmax(136px, 1fr) minmax(78px, 0.55fr) minmax(110px, 0.7fr) minmax(148px, auto);
   align-items: center;
-  gap: 8px;
+  gap: 18px;
   background: #fff;
 }
 
@@ -321,6 +321,7 @@ select:focus {
 .key-chip span {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .key-chip small {
@@ -332,6 +333,7 @@ select:focus {
   color: var(--accent-strong);
   font-size: 11px;
   text-transform: uppercase;
+  min-width: 0;
 }
 
 .key-chip.daily-limited strong {
@@ -340,6 +342,14 @@ select:focus {
 
 .key-chip.rate-limited strong {
   color: var(--warn);
+}
+
+.key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .key-chip button {

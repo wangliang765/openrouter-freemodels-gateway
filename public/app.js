@@ -203,6 +203,17 @@ function writeStoredApiKeyInfo() {
   writeJsonStorage(API_KEY_INFO_KEY, apiKeyInfo);
 }
 
+function ensureApiKeyInfo(key) {
+  if (!key) return null;
+  const previous = apiKeyInfo[key] || {};
+  apiKeyInfo[key] = {
+    ...previous,
+    label: previous.label || maskApiKey(key),
+    status: previous.status || "ok"
+  };
+  return apiKeyInfo[key];
+}
+
 function readStoredQuotaResetAt() {
   const value = Number(localStorage.getItem(API_KEY_QUOTA_RESET_KEY) || 0);
   return Number.isFinite(value) ? value : 0;
@@ -344,6 +355,20 @@ function resetEstimatedRemaining(key, resetAt = latestBeijing8ResetAt()) {
   return true;
 }
 
+function resetModelUsageCount(key, resetAt = latestBeijing8ResetAt()) {
+  const info = ensureApiKeyInfo(key);
+  if (!info) return false;
+  const usage = info.modelUsage || {};
+  if (Number(usage.resetAt || 0) === resetAt && Number(usage.consumed || 0) === 0) return false;
+  info.modelUsage = {
+    consumed: 0,
+    resetAt,
+    updatedAt: Date.now()
+  };
+  writeStoredApiKeyInfo();
+  return true;
+}
+
 function resetExpiredApiKeyLimits() {
   const now = Date.now();
   let changed = false;
@@ -352,6 +377,7 @@ function resetExpiredApiKeyLimits() {
     if (!apiKeys.includes(key) || Number(limit?.resetAt || 0) <= now) {
       delete apiKeyLimits[key];
       resetEstimatedRemaining(key);
+      resetModelUsageCount(key);
       changed = true;
     }
   }
@@ -367,6 +393,7 @@ function resetDailyQuotaEstimates() {
   let changed = false;
   for (const key of apiKeys) {
     if (resetEstimatedRemaining(key, latestResetAt)) changed = true;
+    if (resetModelUsageCount(key, latestResetAt)) changed = true;
   }
 
   lastQuotaResetAt = latestResetAt;
@@ -387,6 +414,16 @@ function markApiKeyDailyLimited(key, resetAt = nextBeijing8ResetAt()) {
     resetAt
   };
   writeStoredApiKeyLimits();
+}
+
+function unlockApiKeyLimit(key) {
+  if (!key) return;
+  delete apiKeyLimits[key];
+  writeStoredApiKeyLimits();
+  resetEstimatedRemaining(key);
+  resetModelUsageCount(key);
+  renderApiKeys();
+  setState("已解除 key 限流标记", "idle");
 }
 
 function activeApiKeys() {
@@ -444,6 +481,14 @@ function remainingQuotaForKey(key) {
   const free = freeInfoForKey(key);
   if (!free) return "unknown";
   return formatNullable(free.remaining);
+}
+
+function modelUsageForKey(key) {
+  const usage = apiKeyInfo[key]?.modelUsage;
+  if (!usage) return "0";
+  const latestResetAt = latestBeijing8ResetAt();
+  if (Number(usage.resetAt || 0) < latestResetAt) return "0";
+  return String(Math.max(0, Number(usage.consumed || 0)));
 }
 
 function quotaSourceForKey(key) {
@@ -522,6 +567,25 @@ function decrementEstimatedRemaining(key) {
   free.updatedAt = Date.now();
   apiKeyInfo[key].freeModels = free;
   writeStoredApiKeyInfo();
+}
+
+function incrementModelUsage(key) {
+  const info = ensureApiKeyInfo(key);
+  if (!info) return;
+  const latestResetAt = latestBeijing8ResetAt();
+  const previous = info.modelUsage || {};
+  const previousConsumed = Number(previous.resetAt || 0) >= latestResetAt ? Number(previous.consumed || 0) : 0;
+  info.modelUsage = {
+    consumed: Math.max(0, previousConsumed) + 1,
+    resetAt: latestResetAt,
+    updatedAt: Date.now()
+  };
+  writeStoredApiKeyInfo();
+}
+
+function recordChargedKeyUse(key, rateLimit) {
+  incrementModelUsage(key);
+  if (!applyRateLimitQuota(key, rateLimit)) decrementEstimatedRemaining(key);
 }
 
 function refreshTemplates(selectedName = "") {
@@ -1258,6 +1322,7 @@ function renderApiKeys(serverKeys = null) {
     <span>账户性质</span>
     <span>总额度</span>
     <span>剩余额度</span>
+    <span>已消耗</span>
     <span>状态</span>
     <span>操作</span>
   `;
@@ -1272,10 +1337,20 @@ function renderApiKeys(serverKeys = null) {
       <span>${accountTypeForKey(key)}</span>
       <span>${totalQuotaForKey(key)}</span>
       <span>${remainingQuotaForKey(key)}<small>${quotaMetaForKey(key)}</small></span>
+      <span>${modelUsageForKey(key)}</span>
       <strong>${item.status}</strong>
-      ${item.removable ? '<button type="button" aria-label="移除 API key">移除</button>' : ""}
+      ${
+        item.removable
+          ? `<div class="key-actions">
+              ${item.status === "daily-limited" ? '<button type="button" data-action="unlock">解除限流</button>' : ""}
+              <button type="button" data-action="remove" aria-label="移除 API key">移除</button>
+            </div>`
+          : ""
+      }
     `;
-    const removeButton = row.querySelector("button");
+    const unlockButton = row.querySelector('[data-action="unlock"]');
+    unlockButton?.addEventListener("click", () => unlockApiKeyLimit(key));
+    const removeButton = row.querySelector('[data-action="remove"]');
     removeButton?.addEventListener("click", () => {
       const removedKey = apiKeys[item.index];
       apiKeys.splice(item.index, 1);
@@ -1386,7 +1461,7 @@ async function sendChat() {
     applyServerKeyStatuses(data.apiKeys);
     if (Number.isInteger(data.key?.id)) {
       const key = chatKeys[data.key.id];
-      if (!applyRateLimitQuota(key, data.rateLimit)) decrementEstimatedRemaining(key);
+      recordChargedKeyUse(key, data.rateLimit);
     }
     chatMessages.push(data.message);
     writeStoredChatMessages();
@@ -1421,7 +1496,8 @@ async function sendChat() {
     applyServerKeyStatuses(error.data?.apiKeys || []);
     if (Number.isInteger(error.data?.key?.id)) {
       const key = chatKeys[error.data.key.id];
-      applyRateLimitQuota(key, error.data?.rateLimit);
+      if (error.data?.charged) recordChargedKeyUse(key, error.data?.rateLimit);
+      else applyRateLimitQuota(key, error.data?.rateLimit);
     }
     chatMessages.push({ role: "assistant", content: `错误：${error.message}` });
     writeStoredChatMessages();
@@ -1549,6 +1625,7 @@ function markKeyLimited(event) {
 
 async function refreshQuota() {
   absorbPendingApiKeys();
+  refreshDailyKeyState();
 
   if (!apiKeys.length) {
     progressText.textContent = "请先添加至少一个 key，再刷新额度";
@@ -1571,7 +1648,9 @@ async function refreshQuota() {
       const key = apiKeys[item.id];
       if (key) {
         const previousRemaining = apiKeyInfo[key]?.freeModels?.remaining;
+        const previousUsage = apiKeyInfo[key]?.modelUsage || null;
         const nextInfo = { ...item, checkedAt: Date.now() };
+        if (previousUsage) nextInfo.modelUsage = previousUsage;
         if (nextInfo.freeModels && (nextInfo.freeModels.remaining === null || nextInfo.freeModels.remaining === undefined)) {
           nextInfo.freeModels.remaining =
             previousRemaining === null || previousRemaining === undefined
@@ -1598,7 +1677,7 @@ function markDone(event) {
   if (!card) return;
   stopTaskTimer(event.index);
   const key = Number.isInteger(event.key?.id) ? currentBatchKeys[event.key.id] : "";
-  if (!applyRateLimitQuota(key, event.rateLimit)) decrementEstimatedRemaining(key);
+  recordChargedKeyUse(key, event.rateLimit);
   renderApiKeys();
 
   const preview = card.querySelector(".preview");
@@ -1643,7 +1722,8 @@ function markError(event) {
 
   if (Number.isInteger(event.key?.id)) {
     const key = currentBatchKeys[event.key.id];
-    if (!applyRateLimitQuota(key, event.rateLimit) && event.charged) decrementEstimatedRemaining(key);
+    if (event.charged) recordChargedKeyUse(key, event.rateLimit);
+    else applyRateLimitQuota(key, event.rateLimit);
     renderApiKeys();
   }
 

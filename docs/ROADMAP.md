@@ -16,6 +16,8 @@
 - Record and persist model health from real requests without spending quota on automatic probes.
 - Update key quota display from OpenRouter `X-RateLimit-*` response headers when available.
 - Show quota source and exact Beijing-time reset metadata in key pool management.
+- Track per-key charged model requests locally from 0 after the daily reset.
+- Allow stale daily-limited key marks to be unlocked manually from key pool management.
 - Keep a local activity log for chat/image attempts, saved output paths, and request errors.
 - Search activity records by prompt, model, key label, saved path, or error text.
 - Export all activity records or only the current filtered activity view.

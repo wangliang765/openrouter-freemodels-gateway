@@ -29,6 +29,8 @@ Open http://localhost:3000.
 - Daily-limited keys are stored with a reset timestamp and automatically return to ready after the next Beijing 08:00 reset.
 - `Refresh quota` calls OpenRouter `/api/v1/key`; request results also read `X-RateLimit-*` headers when OpenRouter returns them, with local estimation used as a fallback.
 - The key pool shows whether remaining quota came from response headers, local estimation, or account inference, and reset times are shown in Beijing time.
+- The key pool also tracks locally counted charged model requests from 0 after the daily reset, so real free-model usage can be compared against OpenRouter's inferred total.
+- Daily-limited keys can be manually unlocked from key pool management if the local limit mark is stale after reset.
 - `Rate limited` responses are not retried on the same key. The task is returned to the queue and assigned to another active key.
 - `Queue mode` forces each key to run one request at a time and waits between tasks.
 - `Retry count` and `Wait seconds` control automatic retry for network interruptions, timeouts, and temporary 5xx errors.

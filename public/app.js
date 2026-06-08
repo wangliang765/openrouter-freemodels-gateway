@@ -40,6 +40,9 @@ const modelStatusFilter = document.querySelector("#modelStatusFilter");
 const modelHealthStats = document.querySelector("#modelHealthStats");
 const textModelList = document.querySelector("#textModelList");
 const imageModelList = document.querySelector("#imageModelList");
+const outputSummary = document.querySelector("#outputSummary");
+const outputGallery = document.querySelector("#outputGallery");
+const refreshOutputsButton = document.querySelector("#refreshOutputsButton");
 const activitySummary = document.querySelector("#activitySummary");
 const activityTypeFilter = document.querySelector("#activityTypeFilter");
 const activityStatusFilter = document.querySelector("#activityStatusFilter");
@@ -90,6 +93,7 @@ let chatMessages = readStoredChatMessages();
 let activityLog = readStoredActivityLog();
 let appSettings = readStoredAppSettings();
 let currentBatchKeys = [];
+let outputImages = [];
 
 function fallbackModelCache() {
   const now = Date.now();
@@ -736,6 +740,64 @@ function emptyModelState(text) {
   return div;
 }
 
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function renderOutputGallery() {
+  outputGallery.innerHTML = "";
+  outputSummary.textContent = `${outputImages.length} 张本地图片 · outputs 目录 · 最近 200 张`;
+
+  if (!outputImages.length) {
+    outputGallery.append(emptyModelState("还没有本地图片。生图成功并保存后会出现在这里。"));
+    return;
+  }
+
+  for (const image of outputImages) {
+    const card = document.createElement("article");
+    card.className = "output-card";
+    const modified = image.modifiedAt ? new Date(image.modifiedAt).toLocaleString() : "未知时间";
+    card.innerHTML = `
+      <a class="output-preview" target="_blank" rel="noreferrer"></a>
+      <div>
+        <strong></strong>
+        <span>${modified} · ${formatBytes(image.bytes)}</span>
+      </div>
+      <a class="download" target="_blank" rel="noreferrer">打开原图</a>
+    `;
+    const preview = card.querySelector(".output-preview");
+    preview.href = image.url;
+    preview.innerHTML = `<img alt="Saved output ${image.filename}" src="${image.url}" loading="lazy" />`;
+    card.querySelector("strong").textContent = image.filename;
+    card.querySelector(".download").href = image.url;
+    outputGallery.append(card);
+  }
+}
+
+async function loadOutputs() {
+  refreshOutputsButton.disabled = true;
+  outputSummary.textContent = "正在读取本地 outputs 目录...";
+
+  try {
+    const response = await fetch("/api/outputs");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    outputImages = Array.isArray(data.images) ? data.images : [];
+  } catch (error) {
+    outputSummary.textContent = error.message || "读取图片库失败";
+    outputGallery.innerHTML = "";
+    outputGallery.append(emptyModelState("读取图片库失败。"));
+    return;
+  } finally {
+    refreshOutputsButton.disabled = false;
+  }
+
+  renderOutputGallery();
+}
+
 function activityStatusLabel(status) {
   const labels = {
     success: "成功",
@@ -1300,6 +1362,8 @@ function markDone(event) {
   link.rel = "noreferrer";
   link.textContent = "打开图片";
   card.querySelector(".card-body").append(link);
+
+  if (document.querySelector("#outputGalleryView")?.classList.contains("active")) loadOutputs();
 }
 
 function markError(event) {
@@ -1464,6 +1528,7 @@ function showView(viewId) {
   }
 
   if (viewId === "localDataView") renderLocalDataSummary();
+  if (viewId === "outputGalleryView") loadOutputs();
 }
 
 sendChatButton.addEventListener("click", sendChat);
@@ -1571,6 +1636,7 @@ refreshQuotaButton.addEventListener("click", refreshQuota);
 refreshModelsButton.addEventListener("click", refreshModels);
 modelSearchInput.addEventListener("input", renderModelLists);
 modelStatusFilter.addEventListener("change", renderModelLists);
+refreshOutputsButton.addEventListener("click", loadOutputs);
 activityTypeFilter.addEventListener("change", renderActivityLog);
 activityStatusFilter.addEventListener("change", renderActivityLog);
 exportActivityButton.addEventListener("click", exportActivityLog);

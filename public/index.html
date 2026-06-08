@@ -18,6 +18,7 @@
           <button id="generateTab" class="tab" type="button" data-view="generateView">生图</button>
           <button id="keyPoolTab" class="tab" type="button" data-view="keyPoolView">key池管理</button>
           <button id="modelManagerTab" class="tab" type="button" data-view="modelManagerView">模型管理</button>
+          <button id="outputGalleryTab" class="tab" type="button" data-view="outputGalleryView">图片库</button>
           <button id="activityTab" class="tab" type="button" data-view="activityView">运行记录</button>
           <button id="localDataTab" class="tab" type="button" data-view="localDataView">本地数据</button>
         </nav>
@@ -272,6 +273,22 @@
             </div>
 
             <div id="activityList" class="activity-list" aria-live="polite"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="outputGalleryView" class="view">
+        <div class="output-page">
+          <section class="panel output-manager">
+            <div class="title-row">
+              <div>
+                <h2>图片库</h2>
+                <p id="outputSummary">正在读取本地 outputs 目录</p>
+              </div>
+              <button id="refreshOutputsButton" type="button" class="secondary">刷新图片库</button>
+            </div>
+
+            <div id="outputGallery" class="output-gallery" aria-live="polite"></div>
           </section>
         </div>
       </section>

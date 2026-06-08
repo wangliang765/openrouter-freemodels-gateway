@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -37,6 +37,7 @@ const CURL_COMMAND = process.platform === "win32" ? "curl.exe" : "curl";
 
 const DEFAULT_IMAGE_MODEL = "sourceful/riverflow-v2.5-pro:free";
 const DEFAULT_TEXT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
+const OUTPUT_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -1286,6 +1287,41 @@ async function serveOutput(req, res) {
   }
 }
 
+async function handleOutputs(req, res) {
+  try {
+    await mkdir(OUTPUT_DIR, { recursive: true });
+    const filenames = await readdir(OUTPUT_DIR);
+    const images = [];
+
+    for (const filename of filenames) {
+      const extension = extname(filename).toLowerCase();
+      if (!OUTPUT_IMAGE_EXTENSIONS.has(extension)) continue;
+
+      const filePath = join(OUTPUT_DIR, filename);
+      if (!filePath.startsWith(OUTPUT_DIR)) continue;
+
+      const info = await stat(filePath).catch(() => null);
+      if (!info?.isFile()) continue;
+
+      images.push({
+        filename,
+        url: `/outputs/${encodeURIComponent(filename)}`,
+        bytes: info.size,
+        modifiedAt: info.mtimeMs,
+        mime: mimeTypes[extension] || "application/octet-stream"
+      });
+    }
+
+    images.sort((a, b) => b.modifiedAt - a.modifiedAt || a.filename.localeCompare(b.filename));
+    sendJson(res, 200, {
+      total: images.length,
+      images: images.slice(0, 200)
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || String(error) });
+  }
+}
+
 const server = createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/api/models") {
     await handleModels(req, res);
@@ -1309,6 +1345,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "POST" && req.url === "/api/key-info") {
     await handleKeyInfo(req, res);
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/api/outputs") {
+    await handleOutputs(req, res);
     return;
   }
 

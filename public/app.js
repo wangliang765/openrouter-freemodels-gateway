@@ -2,6 +2,7 @@ const chatModelSelect = document.querySelector("#chatModelSelect");
 const chatMessagesEl = document.querySelector("#chatMessages");
 const chatInput = document.querySelector("#chatInput");
 const sendChatButton = document.querySelector("#sendChatButton");
+const stopChatButton = document.querySelector("#stopChatButton");
 const clearChatButton = document.querySelector("#clearChatButton");
 const refreshModelsFromChatButton = document.querySelector("#refreshModelsFromChatButton");
 const chatKeySummary = document.querySelector("#chatKeySummary");
@@ -97,6 +98,8 @@ let currentBatchKeys = [];
 let outputImages = [];
 let activeRunController = null;
 let stopRequested = false;
+let activeChatController = null;
+let stopChatRequested = false;
 
 function fallbackModelCache() {
   const now = Date.now();
@@ -1119,6 +1122,14 @@ function renderChatMessages() {
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
 
+function stopActiveChat() {
+  if (!activeChat || !activeChatController) return;
+  stopChatRequested = true;
+  stopChatButton.disabled = true;
+  setState("正在停止", "running");
+  activeChatController.abort();
+}
+
 async function sendChat() {
   if (activeChat) return;
   const content = chatInput.value.trim();
@@ -1144,6 +1155,9 @@ async function sendChat() {
   renderChatMessages();
   activeChat = true;
   sendChatButton.disabled = true;
+  stopChatButton.disabled = false;
+  stopChatRequested = false;
+  activeChatController = new AbortController();
   setState("聊天中", "running");
   const startedAt = Date.now();
   const selectedModel = chatModelSelect.value || DEFAULT_TEXT_MODEL;
@@ -1152,6 +1166,7 @@ async function sendChat() {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: activeChatController.signal,
       body: JSON.stringify({
         model: selectedModel,
         apiKeys: chatKeys,
@@ -1179,6 +1194,22 @@ async function sendChat() {
     renderApiKeys();
     setState("就绪", "idle");
   } catch (error) {
+    if (stopChatRequested || error.name === "AbortError") {
+      chatMessages.push({ role: "assistant", content: "已停止生成。" });
+      writeStoredChatMessages();
+      renderChatMessages();
+      addActivity({
+        type: "chat",
+        status: "error",
+        model: selectedModel,
+        message: clipText(content),
+        durationMs: Date.now() - startedAt,
+        error: "用户停止生成"
+      });
+      setState("已停止", "idle");
+      return;
+    }
+
     applyServerKeyStatuses(error.data?.apiKeys || []);
     chatMessages.push({ role: "assistant", content: `错误：${error.message}` });
     writeStoredChatMessages();
@@ -1196,7 +1227,10 @@ async function sendChat() {
     setState("错误", "error");
   } finally {
     activeChat = false;
+    activeChatController = null;
+    stopChatRequested = false;
     sendChatButton.disabled = false;
+    stopChatButton.disabled = true;
   }
 }
 
@@ -1574,6 +1608,7 @@ function showView(viewId) {
 }
 
 sendChatButton.addEventListener("click", sendChat);
+stopChatButton.addEventListener("click", stopActiveChat);
 chatInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
@@ -1581,6 +1616,7 @@ chatInput.addEventListener("keydown", (event) => {
   }
 });
 clearChatButton.addEventListener("click", () => {
+  if (activeChat) stopActiveChat();
   chatMessages = [];
   writeStoredChatMessages();
   renderChatMessages();

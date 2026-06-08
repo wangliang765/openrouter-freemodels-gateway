@@ -6,6 +6,7 @@
 - Pull OpenRouter model metadata from `/api/v1/models`.
 - Classify free models into text and image groups.
 - Let chat choose a free language model.
+- Allow running chat requests to be stopped from the local page.
 - Let image generation choose a free image model.
 - Allow running image batches to be stopped from the local page.
 - Provide a local gallery for saved image outputs.

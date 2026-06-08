@@ -22,6 +22,7 @@ Open http://localhost:3000.
 - `模型管理` refreshes OpenRouter `/api/v1/models`, filters free models, and separates text and image models.
 - Model metadata and request-derived health status are cached in local `data/model-cache.json`; this file is ignored by git.
 - Chat and image generation both use the selected model from the page dropdowns.
+- Running chat requests can be stopped manually from the page.
 - Selected models and task parameters are saved in browser localStorage and restored after refresh.
 - `Per-key concurrency` is applied to every active key. For example, 4 keys with concurrency 2 can run up to 8 tasks at once.
 - When a key hits `free-models-per-day`, it is marked `daily-limited` and skipped for the rest of the batch.

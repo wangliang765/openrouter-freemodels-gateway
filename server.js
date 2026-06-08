@@ -435,6 +435,14 @@ function buildImageConfig({ aspectRatio, imageSize }) {
   return Object.keys(imageConfig).length ? imageConfig : undefined;
 }
 
+function normalizeReferenceImages(source) {
+  if (!Array.isArray(source)) return [];
+  return source
+    .map((item) => (typeof item === "string" ? item : item?.url))
+    .map((url) => String(url || "").trim())
+    .filter((url) => /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i.test(url) || /^https?:\/\/\S+$/i.test(url));
+}
+
 function modelSupportsParameter(modelInfo, parameter) {
   const supported = modelInfo?.supportedParameters || [];
   return !supported.length || supported.includes(parameter);
@@ -825,9 +833,16 @@ async function generateImage({ prompt, options, apiKey, signal }) {
 
   const modelInfo = getModelInfo(options?.model || DEFAULT_IMAGE_MODEL, "image");
   const imageConfig = buildImageConfig(options || {});
+  const referenceImages = normalizeReferenceImages(options?.referenceImages);
+  const content = referenceImages.length
+    ? [
+        { type: "text", text: prompt },
+        ...referenceImages.map((url) => ({ type: "image_url", image_url: { url } }))
+      ]
+    : prompt;
   const requestBody = {
     model: modelInfo.id,
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content }],
     modalities: ["image"]
   };
 
@@ -1133,6 +1148,7 @@ async function handleBatch(req, res) {
     model: selectedModel,
     aspectRatio: String(body.aspectRatio || "auto"),
     imageSize: String(body.imageSize || "auto"),
+    referenceImages: normalizeReferenceImages(body.referenceImages),
     queueMode,
     retryMax,
     retryDelayMs
@@ -1171,7 +1187,8 @@ async function handleBatch(req, res) {
     retryMax,
     retryDelayMs,
     apiKeys: keyPool.snapshot(),
-    model: selectedModel
+    model: selectedModel,
+    referenceImageCount: options.referenceImages.length
   });
 
   const pendingTasks = prompts.map((prompt, index) => ({ index, prompt }));

@@ -6,6 +6,7 @@ This alpha is a local-only console for internal use. It does not expose the Phas
 
 - Chat with a selected free text model.
 - Generate image batches with a selected free image model.
+- Attach any number of in-memory reference images for image-to-image/editing requests.
 - Manage a local API key pool with per-key concurrency, daily-limit skipping, quota metadata, and local charged-request counting.
 - Browse, search, open, and delete locally saved output images.
 - Browse, search, export, and clear local activity records.
@@ -45,4 +46,5 @@ The health response should return `ok: true`, `phase: "local-console-alpha"`, de
 - Free-model availability and behavior can change on OpenRouter without notice.
 - Remaining free-model quota is response-header driven when available and locally estimated otherwise.
 - Real model smoke tests spend OpenRouter quota; use fake keys for layout checks.
+- Reference images are sent with the current request only. They are not saved to prompt templates, local data backups, or the server filesystem.
 - External gateway tokens, server-side key storage, per-user quotas, async jobs, and OpenAI-compatible `/v1/*` endpoints are Phase 2 work.

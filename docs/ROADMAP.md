@@ -11,6 +11,7 @@ Status: local alpha. See `docs/ALPHA.md` for acceptance checks and known limits.
 - Let chat choose a free language model.
 - Allow running chat requests to be stopped from the local page.
 - Let image generation choose a free image model.
+- Support in-memory reference images for image-to-image/editing-capable image models.
 - Allow running image batches to be stopped from the local page.
 - Provide a searchable local gallery for saved image outputs, including local file deletion.
 - Keep API keys in browser localStorage for this local-only phase.

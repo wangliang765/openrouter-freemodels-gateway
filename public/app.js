@@ -8,6 +8,10 @@ const refreshModelsFromChatButton = document.querySelector("#refreshModelsFromCh
 const chatKeySummary = document.querySelector("#chatKeySummary");
 const imageModelSelect = document.querySelector("#imageModelSelect");
 const promptInput = document.querySelector("#prompt");
+const referenceImagesInput = document.querySelector("#referenceImagesInput");
+const referencePreviewList = document.querySelector("#referencePreviewList");
+const referenceSummary = document.querySelector("#referenceSummary");
+const clearReferenceImagesButton = document.querySelector("#clearReferenceImagesButton");
 const promptListInput = document.querySelector("#promptList");
 const apiKeyInput = document.querySelector("#apiKeyInput");
 const apiKeysBulkInput = document.querySelector("#apiKeysBulk");
@@ -99,6 +103,7 @@ let activityLog = readStoredActivityLog();
 let appSettings = readStoredAppSettings();
 let currentBatchKeys = [];
 let outputImages = [];
+let referenceImages = [];
 let activeRunController = null;
 let stopRequested = false;
 let activeChatController = null;
@@ -586,6 +591,66 @@ function incrementModelUsage(key) {
 function recordChargedKeyUse(key, rateLimit) {
   incrementModelUsage(key);
   if (!applyRateLimitQuota(key, rateLimit)) decrementEstimatedRemaining(key);
+}
+
+function readImageFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(reader.error || new Error("读取参考图失败")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderReferenceImages() {
+  referencePreviewList.innerHTML = "";
+  referenceSummary.textContent = referenceImages.length ? `${referenceImages.length} 张参考图` : "未添加参考图";
+  clearReferenceImagesButton.disabled = referenceImages.length === 0;
+
+  for (const [index, image] of referenceImages.entries()) {
+    const item = document.createElement("div");
+    item.className = "reference-preview";
+    item.innerHTML = `
+      <img alt="参考图 ${index + 1}" src="${image.url}" />
+      <div>
+        <strong>${image.name || `参考图 ${index + 1}`}</strong>
+        <small>${image.type || "image"} · ${formatBytes(image.bytes)}</small>
+      </div>
+      <button type="button" class="secondary danger" aria-label="移除参考图">移除</button>
+    `;
+    item.querySelector("button").addEventListener("click", () => {
+      referenceImages.splice(index, 1);
+      renderReferenceImages();
+    });
+    referencePreviewList.append(item);
+  }
+}
+
+async function addReferenceImageFiles(files) {
+  const imageFiles = Array.from(files || []).filter((file) => file?.type?.startsWith("image/"));
+  if (!imageFiles.length) {
+    progressText.textContent = "请选择图片文件作为参考图";
+    return;
+  }
+
+  progressText.textContent = "正在读取参考图...";
+  try {
+    const nextImages = await Promise.all(
+      imageFiles.map(async (file) => ({
+        name: file.name,
+        type: file.type,
+        bytes: file.size,
+        url: await readImageFileAsDataUrl(file)
+      }))
+    );
+    referenceImages.push(...nextImages);
+    renderReferenceImages();
+    progressText.textContent = `已添加 ${nextImages.length} 张参考图`;
+  } catch (error) {
+    progressText.textContent = error?.message || "参考图读取失败";
+  } finally {
+    referenceImagesInput.value = "";
+  }
 }
 
 function refreshTemplates(selectedName = "") {
@@ -1781,6 +1846,12 @@ async function runBatch() {
         model: imageModelSelect.value || DEFAULT_IMAGE_MODEL,
         prompt: promptInput.value,
         promptList: promptListInput.value,
+        referenceImages: referenceImages.map((image) => ({
+          url: image.url,
+          name: image.name,
+          type: image.type,
+          bytes: image.bytes
+        })),
         apiKeys: currentBatchKeys,
         count: countInput.value,
         concurrency: concurrencyInput.value,
@@ -1818,7 +1889,8 @@ async function runBatch() {
           finished = 0;
           renderApiKeys(event.apiKeys);
           updateProgress();
-          progressText.textContent = `正在使用 ${event.model}`;
+          const referenceText = event.referenceImageCount ? ` · ${event.referenceImageCount} 张参考图` : "";
+          progressText.textContent = `正在使用 ${event.model}${referenceText}`;
         }
 
         if (event.type === "task-start") makeCard(event.index, event.prompt);
@@ -1918,6 +1990,12 @@ clearChatButton.addEventListener("click", () => {
 refreshModelsFromChatButton.addEventListener("click", refreshModels);
 runButton.addEventListener("click", runBatch);
 stopRunButton.addEventListener("click", stopActiveRun);
+referenceImagesInput.addEventListener("change", () => addReferenceImageFiles(referenceImagesInput.files));
+clearReferenceImagesButton.addEventListener("click", () => {
+  referenceImages = [];
+  renderReferenceImages();
+  progressText.textContent = "参考图已清空";
+});
 clearButton.addEventListener("click", () => {
   if (activeRun) stopActiveRun();
   for (const index of taskTimers.keys()) stopTaskTimer(index);
@@ -2034,6 +2112,7 @@ renderChatMessages();
 renderApiKeys();
 renderActivityLog();
 renderLocalDataSummary();
+renderReferenceImages();
 updateProgress();
 loadModels();
 

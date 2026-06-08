@@ -77,6 +77,21 @@
               <textarea id="prompt" rows="6" placeholder="示例：a cinematic product photo of a translucent glass teapot on a walnut table, morning light"></textarea>
             </label>
 
+            <section class="reference-panel">
+              <div class="reference-header">
+                <div>
+                  <strong>参考图</strong>
+                  <span id="referenceSummary">未添加参考图</span>
+                </div>
+                <button id="clearReferenceImagesButton" type="button" class="secondary">清空参考图</button>
+              </div>
+              <label class="reference-drop">
+                <input id="referenceImagesInput" type="file" accept="image/*" multiple />
+                <span>上传参考图，可多选</span>
+              </label>
+              <div id="referencePreviewList" class="reference-preview-list" aria-live="polite"></div>
+            </section>
+
             <div class="template-row">
               <input id="templateName" type="text" placeholder="模板名称" />
               <button id="saveTemplateButton" type="button" class="secondary">保存</button>

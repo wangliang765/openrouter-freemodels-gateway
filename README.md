@@ -31,6 +31,7 @@ Invoke-WebRequest -UseBasicParsing http://localhost:3000/api/health
 - Chat and image generation both use the selected model from the page dropdowns.
 - Running chat requests can be stopped manually from the page.
 - Selected models and task parameters are saved in browser localStorage and restored after refresh.
+- The image generation page supports uploading any number of reference images for image-to-image/editing requests; reference images are kept in memory for the current page session and are not saved in templates or local backups.
 - `Per-key concurrency` is applied to every active key. For example, 4 keys with concurrency 2 can run up to 8 tasks at once.
 - When a key hits `free-models-per-day`, it is marked `daily-limited` and skipped for the rest of the batch.
 - Daily-limited keys are stored with a reset timestamp and automatically return to ready after the next Beijing 08:00 reset.

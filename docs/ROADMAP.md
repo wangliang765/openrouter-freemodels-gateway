@@ -14,6 +14,7 @@
 - Persist selected models and task parameters in browser localStorage.
 - Record and persist model health from real requests without spending quota on automatic probes.
 - Update key quota display from OpenRouter `X-RateLimit-*` response headers when available.
+- Show quota source and exact Beijing-time reset metadata in key pool management.
 - Keep a local activity log for chat/image attempts, saved output paths, and request errors.
 - Support local export/import for non-sensitive browser data without including API keys.
 

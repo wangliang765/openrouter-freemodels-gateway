@@ -400,13 +400,20 @@ function updateKeyPoolSummary() {
   chatKeySummary.textContent = summary;
 }
 
-function formatBeijingReset(resetAt) {
-  if (!resetAt) return "";
-  const date = new Date(resetAt + 8 * 60 * 60 * 1000);
+function formatBeijingDateTime(timestamp) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp + 8 * 60 * 60 * 1000);
   const yyyy = date.getUTCFullYear();
   const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(date.getUTCDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd} 北京时间 08:00`;
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const min = String(date.getUTCMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+}
+
+function formatBeijingReset(resetAt) {
+  if (!resetAt) return "";
+  return `${formatBeijingDateTime(resetAt)} 北京时间`;
 }
 
 function formatNullable(value) {
@@ -434,6 +441,23 @@ function remainingQuotaForKey(key) {
   const free = freeInfoForKey(key);
   if (!free) return "unknown";
   return formatNullable(free.remaining);
+}
+
+function quotaSourceForKey(key) {
+  const free = freeInfoForKey(key);
+  if (!free?.source) return "未知来源";
+  if (free.source === "response-header") return "响应头";
+  if (free.source === "local-estimate") return "本地估算";
+  if (free.source === "inferred") return "账户推断";
+  return free.source;
+}
+
+function quotaMetaForKey(key) {
+  const free = freeInfoForKey(key);
+  if (!free) return "";
+  const parts = [quotaSourceForKey(key)];
+  if (free.updatedAt) parts.push(formatBeijingDateTime(free.updatedAt));
+  return parts.filter(Boolean).join(" · ");
 }
 
 function normalizeRateLimitReset(resetAt) {
@@ -1113,7 +1137,7 @@ function renderApiKeys(serverKeys = null) {
       <span>${item.label}${item.resetText ? `<small>${item.resetText}</small>` : ""}</span>
       <span>${accountTypeForKey(key)}</span>
       <span>${totalQuotaForKey(key)}</span>
-      <span>${remainingQuotaForKey(key)}</span>
+      <span>${remainingQuotaForKey(key)}<small>${quotaMetaForKey(key)}</small></span>
       <strong>${item.status}</strong>
       ${item.removable ? '<button type="button" aria-label="移除 API key">移除</button>' : ""}
     `;

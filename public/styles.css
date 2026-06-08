@@ -510,7 +510,7 @@ select:focus {
 
 .activity-tools {
   display: grid;
-  grid-template-columns: minmax(160px, 240px) minmax(160px, 240px);
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) minmax(160px, 220px);
   gap: 12px;
 }
 

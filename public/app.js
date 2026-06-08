@@ -46,6 +46,7 @@ const outputSummary = document.querySelector("#outputSummary");
 const outputGallery = document.querySelector("#outputGallery");
 const refreshOutputsButton = document.querySelector("#refreshOutputsButton");
 const activitySummary = document.querySelector("#activitySummary");
+const activitySearchInput = document.querySelector("#activitySearch");
 const activityTypeFilter = document.querySelector("#activityTypeFilter");
 const activityStatusFilter = document.querySelector("#activityStatusFilter");
 const activityList = document.querySelector("#activityList");
@@ -975,11 +976,28 @@ function activityTypeLabel(type) {
 }
 
 function filteredActivityLog() {
+  const query = (activitySearchInput.value || "").trim().toLowerCase();
   const type = activityTypeFilter.value || "all";
   const status = activityStatusFilter.value || "all";
   return activityLog.filter((item) => {
     if (type !== "all" && item.type !== type) return false;
     if (status !== "all" && item.status !== status) return false;
+    if (!query) return true;
+
+    const haystack = [
+      item.type,
+      item.status,
+      item.model,
+      item.prompt,
+      item.message,
+      item.keyLabel,
+      item.error,
+      item.savedPath
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (!haystack.includes(query)) return false;
     return true;
   });
 }
@@ -1030,7 +1048,8 @@ function exportFilteredActivityLog() {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const type = activityTypeFilter.value || "all";
   const status = activityStatusFilter.value || "all";
-  downloadJson(`openrouter-activity-${type}-${status}-${stamp}.json`, filteredActivityLog());
+  const query = (activitySearchInput.value || "all").trim().replace(/[^\w.-]+/g, "-").slice(0, 40) || "all";
+  downloadJson(`openrouter-activity-${type}-${status}-${query}-${stamp}.json`, filteredActivityLog());
 }
 
 function backupValueForKey(key) {
@@ -1890,6 +1909,7 @@ refreshModelsButton.addEventListener("click", refreshModels);
 modelSearchInput.addEventListener("input", renderModelLists);
 modelStatusFilter.addEventListener("change", renderModelLists);
 refreshOutputsButton.addEventListener("click", loadOutputs);
+activitySearchInput.addEventListener("input", renderActivityLog);
 activityTypeFilter.addEventListener("change", renderActivityLog);
 activityStatusFilter.addEventListener("change", renderActivityLog);
 exportActivityButton.addEventListener("click", exportActivityLog);

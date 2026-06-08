@@ -50,6 +50,7 @@ const activityTypeFilter = document.querySelector("#activityTypeFilter");
 const activityStatusFilter = document.querySelector("#activityStatusFilter");
 const activityList = document.querySelector("#activityList");
 const exportActivityButton = document.querySelector("#exportActivityButton");
+const exportFilteredActivityButton = document.querySelector("#exportFilteredActivityButton");
 const clearActivityButton = document.querySelector("#clearActivityButton");
 const localDataSummary = document.querySelector("#localDataSummary");
 const exportLocalDataButton = document.querySelector("#exportLocalDataButton");
@@ -940,6 +941,13 @@ function exportActivityLog() {
   downloadJson(`openrouter-activity-${stamp}.json`, activityLog);
 }
 
+function exportFilteredActivityLog() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const type = activityTypeFilter.value || "all";
+  const status = activityStatusFilter.value || "all";
+  downloadJson(`openrouter-activity-${type}-${status}-${stamp}.json`, filteredActivityLog());
+}
+
 function backupValueForKey(key) {
   if (key === APP_SETTINGS_KEY) return currentAppSettings();
   if (key === TEMPLATE_KEY) return readTemplates();
@@ -1800,6 +1808,7 @@ refreshOutputsButton.addEventListener("click", loadOutputs);
 activityTypeFilter.addEventListener("change", renderActivityLog);
 activityStatusFilter.addEventListener("change", renderActivityLog);
 exportActivityButton.addEventListener("click", exportActivityLog);
+exportFilteredActivityButton.addEventListener("click", exportFilteredActivityLog);
 clearActivityButton.addEventListener("click", () => {
   activityLog = [];
   writeStoredActivityLog();

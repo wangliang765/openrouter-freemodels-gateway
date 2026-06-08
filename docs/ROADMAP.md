@@ -16,6 +16,7 @@
 - Update key quota display from OpenRouter `X-RateLimit-*` response headers when available.
 - Show quota source and exact Beijing-time reset metadata in key pool management.
 - Keep a local activity log for chat/image attempts, saved output paths, and request errors.
+- Export all activity records or only the current filtered activity view.
 - Support local export/import for non-sensitive browser data without including API keys.
 
 ## Phase 2: External API Gateway

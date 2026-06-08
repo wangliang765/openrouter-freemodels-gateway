@@ -1,9 +1,10 @@
 {
   "name": "openrouter-freemodels-gateway",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
   "scripts": {
+    "check": "node --check server.js && node --check public/app.js",
     "start": "node server.js"
   }
 }

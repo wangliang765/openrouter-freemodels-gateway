@@ -38,6 +38,7 @@ const CURL_COMMAND = process.platform === "win32" ? "curl.exe" : "curl";
 const DEFAULT_IMAGE_MODEL = "sourceful/riverflow-v2.5-pro:free";
 const DEFAULT_TEXT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 const OUTPUT_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+const PACKAGE_INFO = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -1400,7 +1401,69 @@ async function handleDeleteOutput(req, res) {
   }
 }
 
+async function pathStatus(path) {
+  try {
+    const info = await stat(path);
+    return {
+      exists: true,
+      directory: info.isDirectory(),
+      file: info.isFile()
+    };
+  } catch (error) {
+    return {
+      exists: false,
+      error: error?.code || error?.message || String(error)
+    };
+  }
+}
+
+async function handleHealth(req, res) {
+  try {
+    await mkdir(OUTPUT_DIR, { recursive: true });
+    await mkdir(DATA_DIR, { recursive: true });
+
+    const [publicDir, outputDir, dataDir, modelCacheFile] = await Promise.all([
+      pathStatus(PUBLIC_DIR),
+      pathStatus(OUTPUT_DIR),
+      pathStatus(DATA_DIR),
+      pathStatus(MODEL_CACHE_FILE)
+    ]);
+
+    sendJson(res, 200, {
+      ok: publicDir.directory && outputDir.directory && dataDir.directory,
+      app: PACKAGE_INFO.name,
+      version: PACKAGE_INFO.version,
+      phase: "local-console-alpha",
+      port: PORT,
+      defaults: {
+        textModel: DEFAULT_TEXT_MODEL,
+        imageModel: DEFAULT_IMAGE_MODEL
+      },
+      models: {
+        all: modelCache.models.length,
+        text: modelCache.text.length,
+        image: modelCache.image.length,
+        refreshedAt: modelCache.refreshedAt || null,
+        error: modelCache.error || ""
+      },
+      storage: {
+        publicDir,
+        outputDir,
+        dataDir,
+        modelCacheFile
+      }
+    });
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+  }
+}
+
 const server = createServer(async (req, res) => {
+  if (req.method === "GET" && req.url === "/api/health") {
+    await handleHealth(req, res);
+    return;
+  }
+
   if (req.method === "GET" && req.url === "/api/models") {
     await handleModels(req, res);
     return;

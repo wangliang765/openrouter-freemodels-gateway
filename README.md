@@ -10,6 +10,13 @@ npm start
 
 Open http://localhost:3000.
 
+Local alpha checks:
+
+```powershell
+npm run check
+Invoke-WebRequest -UseBasicParsing http://localhost:3000/api/health
+```
+
 ## Usage
 
 - Add one or more OpenRouter API keys in `key池管理` before chatting or generating images.
@@ -44,3 +51,4 @@ Open http://localhost:3000.
 ## Roadmap
 
 See `docs/ROADMAP.md` for the local-console phase and the future OpenAI-compatible API gateway phase.
+See `docs/ALPHA.md` for the current local alpha scope and acceptance checks.

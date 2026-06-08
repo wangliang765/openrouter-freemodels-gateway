@@ -2,6 +2,8 @@
 
 ## Phase 1: Local Console
 
+Status: local alpha. See `docs/ALPHA.md` for acceptance checks and known limits.
+
 - Add top-level views for chat, image generation, key pool management, and model management.
 - Pull OpenRouter model metadata from `/api/v1/models`.
 - Classify free models into text and image groups.
@@ -22,6 +24,7 @@
 - Search activity records by prompt, model, key label, saved path, or error text.
 - Export all activity records or only the current filtered activity view.
 - Support local export/import for non-sensitive browser data without including API keys.
+- Provide a local `/api/health` endpoint for alpha readiness checks without spending OpenRouter quota.
 
 ## Phase 2: External API Gateway
 

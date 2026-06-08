@@ -577,6 +577,13 @@ select:focus {
   margin-top: 18px;
 }
 
+.output-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 420px);
+  gap: 12px;
+  margin-top: 18px;
+}
+
 .output-card {
   display: grid;
   gap: 9px;

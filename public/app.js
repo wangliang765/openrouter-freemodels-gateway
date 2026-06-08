@@ -43,6 +43,7 @@ const modelHealthStats = document.querySelector("#modelHealthStats");
 const textModelList = document.querySelector("#textModelList");
 const imageModelList = document.querySelector("#imageModelList");
 const outputSummary = document.querySelector("#outputSummary");
+const outputSearchInput = document.querySelector("#outputSearch");
 const outputGallery = document.querySelector("#outputGallery");
 const refreshOutputsButton = document.querySelector("#refreshOutputsButton");
 const activitySummary = document.querySelector("#activitySummary");
@@ -887,16 +888,37 @@ function formatBytes(bytes) {
   return `${(value / 1024 / 1024).toFixed(2)} MB`;
 }
 
+function outputMatchesSearch(image) {
+  const query = (outputSearchInput.value || "").trim().toLowerCase();
+  if (!query) return true;
+
+  const modified = image.modifiedAt ? new Date(image.modifiedAt).toLocaleString() : "";
+  const haystack = [
+    image.filename,
+    image.mime,
+    formatBytes(image.bytes),
+    modified
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
 function renderOutputGallery() {
   outputGallery.innerHTML = "";
-  outputSummary.textContent = `${outputImages.length} 张本地图片 · outputs 目录 · 最近 200 张`;
+  const visibleImages = outputImages.filter(outputMatchesSearch);
+  outputSummary.textContent = `${outputImages.length} 张本地图片 · 当前显示 ${visibleImages.length} · outputs 目录 · 最近 200 张`;
 
-  if (!outputImages.length) {
-    outputGallery.append(emptyModelState("还没有本地图片。生图成功并保存后会出现在这里。"));
+  if (!visibleImages.length) {
+    const message = outputImages.length
+      ? "没有匹配的本地图片。"
+      : "还没有本地图片。生图成功并保存后会出现在这里。";
+    outputGallery.append(emptyModelState(message));
     return;
   }
 
-  for (const image of outputImages) {
+  for (const image of visibleImages) {
     const card = document.createElement("article");
     card.className = "output-card";
     const modified = image.modifiedAt ? new Date(image.modifiedAt).toLocaleString() : "未知时间";
@@ -1908,6 +1930,7 @@ refreshQuotaButton.addEventListener("click", refreshQuota);
 refreshModelsButton.addEventListener("click", refreshModels);
 modelSearchInput.addEventListener("input", renderModelLists);
 modelStatusFilter.addEventListener("change", renderModelLists);
+outputSearchInput.addEventListener("input", renderOutputGallery);
 refreshOutputsButton.addEventListener("click", loadOutputs);
 activitySearchInput.addEventListener("input", renderActivityLog);
 activityTypeFilter.addEventListener("change", renderActivityLog);

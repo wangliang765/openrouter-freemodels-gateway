@@ -40,6 +40,12 @@ const modelStatusFilter = document.querySelector("#modelStatusFilter");
 const modelHealthStats = document.querySelector("#modelHealthStats");
 const textModelList = document.querySelector("#textModelList");
 const imageModelList = document.querySelector("#imageModelList");
+const activitySummary = document.querySelector("#activitySummary");
+const activityTypeFilter = document.querySelector("#activityTypeFilter");
+const activityStatusFilter = document.querySelector("#activityStatusFilter");
+const activityList = document.querySelector("#activityList");
+const exportActivityButton = document.querySelector("#exportActivityButton");
+const clearActivityButton = document.querySelector("#clearActivityButton");
 const viewTabs = document.querySelectorAll(".tab");
 const views = document.querySelectorAll(".view");
 
@@ -52,6 +58,8 @@ const API_KEY_INFO_KEY = "riverflow.apiKeyInfo";
 const API_KEY_QUOTA_RESET_KEY = "riverflow.lastQuotaResetAt";
 const MODEL_CACHE_KEY = "openrouter.modelCache";
 const CHAT_MESSAGES_KEY = "openrouter.chatMessages";
+const ACTIVITY_LOG_KEY = "openrouter.activityLog";
+const MAX_ACTIVITY_ITEMS = 200;
 
 let activeRun = false;
 let activeChat = false;
@@ -65,6 +73,7 @@ let apiKeyInfo = readStoredApiKeyInfo();
 let lastQuotaResetAt = readStoredQuotaResetAt();
 let modelCache = readStoredModelCache();
 let chatMessages = readStoredChatMessages();
+let activityLog = readStoredActivityLog();
 let currentBatchKeys = [];
 
 function fallbackModelCache() {
@@ -195,6 +204,33 @@ function readStoredChatMessages() {
 
 function writeStoredChatMessages() {
   writeJsonStorage(CHAT_MESSAGES_KEY, chatMessages.slice(-40));
+}
+
+function readStoredActivityLog() {
+  const items = readJsonStorage(ACTIVITY_LOG_KEY, []);
+  return Array.isArray(items)
+    ? items.filter((item) => item && typeof item.id === "string" && ["chat", "image"].includes(item.type)).slice(0, MAX_ACTIVITY_ITEMS)
+    : [];
+}
+
+function writeStoredActivityLog() {
+  writeJsonStorage(ACTIVITY_LOG_KEY, activityLog.slice(0, MAX_ACTIVITY_ITEMS));
+}
+
+function clipText(text, max = 180) {
+  const value = String(text || "").trim();
+  return value.length > max ? `${value.slice(0, max - 1)}...` : value;
+}
+
+function addActivity(entry) {
+  const item = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    createdAt: Date.now(),
+    ...entry
+  };
+  activityLog = [item, ...activityLog].slice(0, MAX_ACTIVITY_ITEMS);
+  writeStoredActivityLog();
+  renderActivityLog();
 }
 
 function nextBeijing8ResetAt(now = new Date()) {
@@ -607,6 +643,77 @@ function emptyModelState(text) {
   return div;
 }
 
+function activityStatusLabel(status) {
+  const labels = {
+    success: "成功",
+    error: "失败",
+    limited: "额度限制"
+  };
+  return labels[status] || status || "未知";
+}
+
+function activityTypeLabel(type) {
+  return type === "image" ? "生图" : "聊天";
+}
+
+function filteredActivityLog() {
+  const type = activityTypeFilter.value || "all";
+  const status = activityStatusFilter.value || "all";
+  return activityLog.filter((item) => {
+    if (type !== "all" && item.type !== type) return false;
+    if (status !== "all" && item.status !== status) return false;
+    return true;
+  });
+}
+
+function renderActivityLog() {
+  activityList.innerHTML = "";
+  const visibleItems = filteredActivityLog();
+  const successCount = activityLog.filter((item) => item.status === "success").length;
+  const errorCount = activityLog.filter((item) => item.status === "error").length;
+  const limitedCount = activityLog.filter((item) => item.status === "limited").length;
+  activitySummary.textContent = `${activityLog.length} 条本地记录 · 成功 ${successCount} · 失败 ${errorCount} · 限流 ${limitedCount} · 当前显示 ${visibleItems.length}`;
+
+  if (!visibleItems.length) {
+    activityList.append(emptyModelState(activityLog.length ? "没有匹配的运行记录。" : "还没有运行记录。聊天或生图后会自动记录在这里。"));
+    return;
+  }
+
+  for (const item of visibleItems) {
+    const row = document.createElement("article");
+    row.className = `activity-item ${item.status || "unknown"}`;
+    const when = item.createdAt ? new Date(item.createdAt).toLocaleString() : "未知时间";
+    const duration = Number.isFinite(item.durationMs) ? `${Math.round(item.durationMs / 1000)} 秒` : "";
+    const savedPath = item.savedPath ? `<small>保存：${item.savedPath}</small>` : "";
+    const keyLabel = item.keyLabel ? `<small>Key：${item.keyLabel}</small>` : "";
+    row.innerHTML = `
+      <div>
+        <strong>${activityTypeLabel(item.type)} · ${activityStatusLabel(item.status)}</strong>
+        <span>${when}${duration ? ` · ${duration}` : ""}</span>
+      </div>
+      <code></code>
+      <p></p>
+      ${keyLabel}
+      ${savedPath}
+      ${item.error ? `<small class="activity-error">${item.error}</small>` : ""}
+    `;
+    row.querySelector("code").textContent = item.model || "未知模型";
+    row.querySelector("p").textContent = item.prompt || item.message || "";
+    activityList.append(row);
+  }
+}
+
+function exportActivityLog() {
+  const blob = new Blob([`${JSON.stringify(activityLog, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  link.href = url;
+  link.download = `openrouter-activity-${stamp}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 async function loadModels() {
   try {
     const response = await fetch("/api/models");
@@ -789,13 +896,15 @@ async function sendChat() {
   activeChat = true;
   sendChatButton.disabled = true;
   setState("聊天中", "running");
+  const startedAt = Date.now();
+  const selectedModel = chatModelSelect.value || DEFAULT_TEXT_MODEL;
 
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: chatModelSelect.value || DEFAULT_TEXT_MODEL,
+        model: selectedModel,
         apiKeys: chatKeys,
         messages: chatMessages.slice(-20),
         retryMax: retryMaxInput.value,
@@ -810,6 +919,14 @@ async function sendChat() {
     chatMessages.push(data.message);
     writeStoredChatMessages();
     renderChatMessages();
+    addActivity({
+      type: "chat",
+      status: "success",
+      model: data.model || selectedModel,
+      message: clipText(content),
+      keyLabel: data.key?.label || "",
+      durationMs: Date.now() - startedAt
+    });
     renderApiKeys();
     setState("就绪", "idle");
   } catch (error) {
@@ -817,6 +934,15 @@ async function sendChat() {
     chatMessages.push({ role: "assistant", content: `错误：${error.message}` });
     writeStoredChatMessages();
     renderChatMessages();
+    addActivity({
+      type: "chat",
+      status: error.data?.apiKeys?.some((key) => key.status === "daily-limited") ? "limited" : "error",
+      model: selectedModel,
+      message: clipText(content),
+      keyLabel: error.data?.key?.label || "",
+      durationMs: Date.now() - startedAt,
+      error: String(error.message || error).slice(0, 240)
+    });
     renderApiKeys();
     setState("错误", "error");
   } finally {
@@ -895,6 +1021,14 @@ function markKeyLimited(event) {
   }
   renderApiKeys(event.apiKeys);
   appendCardNote(event.index, `${event.key?.label || "API key"} 已达到额度限制，已跳过。`);
+  addActivity({
+    type: "image",
+    status: "limited",
+    model: imageModelSelect.value || DEFAULT_IMAGE_MODEL,
+    prompt: clipText(event.prompt),
+    keyLabel: event.key?.label || "",
+    error: "API key 已达到额度限制"
+  });
 }
 
 async function refreshQuota() {
@@ -965,6 +1099,16 @@ function markDone(event) {
     card.querySelector(".card-body").append(savedLine);
   }
 
+  addActivity({
+    type: "image",
+    status: "success",
+    model: event.model || imageModelSelect.value || DEFAULT_IMAGE_MODEL,
+    prompt: clipText(event.prompt),
+    keyLabel: event.key?.label || "",
+    durationMs: event.durationMs,
+    savedPath: saved?.filename ? `outputs/${saved.filename}` : ""
+  });
+
   const link = document.createElement("a");
   link.className = "download";
   link.href = imageUrl;
@@ -990,6 +1134,15 @@ function markError(event) {
   error.className = "error-text";
   error.textContent = event.error;
   card.querySelector(".card-body").append(error);
+  addActivity({
+    type: "image",
+    status: "error",
+    model: imageModelSelect.value || DEFAULT_IMAGE_MODEL,
+    prompt: clipText(event.prompt),
+    keyLabel: event.key?.label || "",
+    durationMs: event.durationMs,
+    error: String(event.error || "请求失败").slice(0, 240)
+  });
 }
 
 async function runBatch() {
@@ -1220,12 +1373,21 @@ refreshQuotaButton.addEventListener("click", refreshQuota);
 refreshModelsButton.addEventListener("click", refreshModels);
 modelSearchInput.addEventListener("input", renderModelLists);
 modelStatusFilter.addEventListener("change", renderModelLists);
+activityTypeFilter.addEventListener("change", renderActivityLog);
+activityStatusFilter.addEventListener("change", renderActivityLog);
+exportActivityButton.addEventListener("click", exportActivityLog);
+clearActivityButton.addEventListener("click", () => {
+  activityLog = [];
+  writeStoredActivityLog();
+  renderActivityLog();
+});
 
 refreshTemplates();
 syncQueueControls();
 renderModelLists();
 renderChatMessages();
 renderApiKeys();
+renderActivityLog();
 updateProgress();
 loadModels();
 

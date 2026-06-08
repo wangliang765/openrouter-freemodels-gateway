@@ -1208,6 +1208,7 @@ async function handleBatch(req, res) {
           writeEvent({
             type: "key-limited",
             index,
+            prompt,
             key: { id: keyEntry.id, label: keyEntry.label, status: keyEntry.status },
             apiKeys: keyPool.snapshot(),
             error: error?.message || String(error)

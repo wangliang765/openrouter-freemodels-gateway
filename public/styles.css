@@ -92,7 +92,8 @@ textarea {
 }
 
 .chat-workspace,
-.model-page {
+.model-page,
+.activity-page {
   display: grid;
   grid-template-columns: minmax(320px, 980px);
   justify-content: center;
@@ -103,7 +104,8 @@ textarea {
 }
 
 .chat-panel,
-.model-manager {
+.model-manager,
+.activity-manager {
   padding: 20px;
 }
 
@@ -128,6 +130,13 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+}
+
+.title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 h1,
@@ -494,6 +503,68 @@ select:focus {
   color: var(--error);
 }
 
+.activity-tools {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) minmax(160px, 240px);
+  gap: 12px;
+}
+
+.activity-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.activity-item {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.activity-item > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.activity-item strong {
+  color: var(--accent-strong);
+}
+
+.activity-item.error strong {
+  color: var(--error);
+}
+
+.activity-item.limited strong {
+  color: var(--warn);
+}
+
+.activity-item span,
+.activity-item small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.activity-item code {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.activity-item p {
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.activity-error {
+  color: var(--error) !important;
+}
+
 .actions {
   margin-top: 18px;
 }
@@ -672,6 +743,10 @@ progress {
   }
 
   .model-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-tools {
     grid-template-columns: 1fr;
   }
 

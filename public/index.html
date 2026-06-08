@@ -18,6 +18,7 @@
           <button id="generateTab" class="tab" type="button" data-view="generateView">生图</button>
           <button id="keyPoolTab" class="tab" type="button" data-view="keyPoolView">key池管理</button>
           <button id="modelManagerTab" class="tab" type="button" data-view="modelManagerView">模型管理</button>
+          <button id="activityTab" class="tab" type="button" data-view="activityView">运行记录</button>
         </nav>
         <span id="serverState" class="status idle">就绪</span>
       </header>
@@ -231,6 +232,45 @@
                 <div id="imageModelList" class="model-list"></div>
               </section>
             </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="activityView" class="view">
+        <div class="activity-page">
+          <section class="panel activity-manager">
+            <div class="title-row">
+              <div>
+                <h2>运行记录</h2>
+                <p id="activitySummary">正在加载本地记录</p>
+              </div>
+              <div class="title-actions">
+                <button id="exportActivityButton" type="button" class="secondary">导出 JSON</button>
+                <button id="clearActivityButton" type="button" class="secondary danger">清空记录</button>
+              </div>
+            </div>
+
+            <div class="activity-tools">
+              <label class="field">
+                <span>类型</span>
+                <select id="activityTypeFilter">
+                  <option value="all">全部类型</option>
+                  <option value="chat">聊天</option>
+                  <option value="image">生图</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>状态</span>
+                <select id="activityStatusFilter">
+                  <option value="all">全部状态</option>
+                  <option value="success">成功</option>
+                  <option value="error">失败</option>
+                  <option value="limited">额度限制</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="activityList" class="activity-list" aria-live="polite"></div>
           </section>
         </div>
       </section>

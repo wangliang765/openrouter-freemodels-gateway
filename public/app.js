@@ -27,6 +27,7 @@ const saveTemplateButton = document.querySelector("#saveTemplateButton");
 const loadTemplateButton = document.querySelector("#loadTemplateButton");
 const deleteTemplateButton = document.querySelector("#deleteTemplateButton");
 const runButton = document.querySelector("#runButton");
+const stopRunButton = document.querySelector("#stopRunButton");
 const clearButton = document.querySelector("#clearButton");
 const results = document.querySelector("#results");
 const progressText = document.querySelector("#progressText");
@@ -94,6 +95,8 @@ let activityLog = readStoredActivityLog();
 let appSettings = readStoredAppSettings();
 let currentBatchKeys = [];
 let outputImages = [];
+let activeRunController = null;
+let stopRequested = false;
 
 function fallbackModelCache() {
   const now = Date.now();
@@ -1244,6 +1247,26 @@ function stopTaskTimer(index) {
   taskTimers.delete(index);
 }
 
+function markRunningCardsStopped() {
+  for (const [index, card] of cards.entries()) {
+    if (!taskTimers.has(index)) continue;
+    stopTaskTimer(index);
+    card.querySelector(".preview").innerHTML = `<div class="error-text">已停止</div>`;
+    setCardStatus(index, "已停止");
+    appendCardNote(index, "任务已由用户手动停止。");
+  }
+}
+
+function stopActiveRun() {
+  if (!activeRun || !activeRunController) return;
+  stopRequested = true;
+  stopRunButton.disabled = true;
+  progressText.textContent = "正在停止批量任务...";
+  setState("正在停止", "running");
+  activeRunController.abort();
+  markRunningCardsStopped();
+}
+
 function appendCardNote(index, text) {
   const card = cards.get(index);
   if (!card) return;
@@ -1415,13 +1438,17 @@ async function runBatch() {
   finished = 0;
   updateProgress();
   activeRun = true;
+  stopRequested = false;
+  activeRunController = new AbortController();
   runButton.disabled = true;
+  stopRunButton.disabled = false;
   setState("运行中", "running");
 
   try {
     const response = await fetch("/api/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: activeRunController.signal,
       body: JSON.stringify({
         model: imageModelSelect.value || DEFAULT_IMAGE_MODEL,
         prompt: promptInput.value,
@@ -1501,14 +1528,29 @@ async function runBatch() {
       }
     }
 
-    setState("就绪", "idle");
+    if (stopRequested) {
+      setState("已停止", "idle");
+      progressText.textContent = "批量任务已停止";
+      markRunningCardsStopped();
+    } else {
+      setState("就绪", "idle");
+    }
     loadModels();
   } catch (error) {
-    setState("错误", "error");
-    progressText.textContent = error.message;
+    if (stopRequested || error.name === "AbortError") {
+      setState("已停止", "idle");
+      progressText.textContent = "批量任务已停止";
+      markRunningCardsStopped();
+    } else {
+      setState("错误", "error");
+      progressText.textContent = error.message;
+    }
   } finally {
     activeRun = false;
+    activeRunController = null;
+    stopRequested = false;
     runButton.disabled = false;
+    stopRunButton.disabled = true;
   }
 }
 
@@ -1545,7 +1587,9 @@ clearChatButton.addEventListener("click", () => {
 });
 refreshModelsFromChatButton.addEventListener("click", refreshModels);
 runButton.addEventListener("click", runBatch);
+stopRunButton.addEventListener("click", stopActiveRun);
 clearButton.addEventListener("click", () => {
+  if (activeRun) stopActiveRun();
   for (const index of taskTimers.keys()) stopTaskTimer(index);
   results.innerHTML = "";
   cards.clear();

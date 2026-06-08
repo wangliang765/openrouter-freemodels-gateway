@@ -30,6 +30,7 @@ Open http://localhost:3000.
 - `Rate limited` responses are not retried on the same key. The task is returned to the queue and assigned to another active key.
 - `Queue mode` forces each key to run one request at a time and waits between tasks.
 - `Retry count` and `Wait seconds` control automatic retry for network interruptions, timeouts, and temporary 5xx errors.
+- Running image batches can be stopped manually from the page; unfinished cards are marked as stopped.
 - Successful base64 images are saved to the local `outputs/` directory and shown in the result card.
 - The local image gallery lists the latest saved output images without requiring API keys.
 - Prompt templates are saved in browser localStorage and do not store API keys.

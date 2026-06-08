@@ -618,6 +618,20 @@ select:focus {
   color: var(--muted);
 }
 
+.output-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.output-actions button,
+.output-actions .download {
+  min-height: 34px;
+  margin-top: 0;
+  flex: 1 1 92px;
+  text-align: center;
+}
+
 .local-data-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));

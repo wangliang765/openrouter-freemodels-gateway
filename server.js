@@ -1365,6 +1365,41 @@ async function handleOutputs(req, res) {
   }
 }
 
+async function handleDeleteOutput(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body." });
+    return;
+  }
+
+  const filename = String(body.filename || "").trim();
+  if (!filename || filename.includes("/") || filename.includes("\\")) {
+    sendJson(res, 400, { error: "Provide a valid output filename." });
+    return;
+  }
+
+  const extension = extname(filename).toLowerCase();
+  if (!OUTPUT_IMAGE_EXTENSIONS.has(extension)) {
+    sendJson(res, 400, { error: "Only saved output image files can be deleted." });
+    return;
+  }
+
+  const filePath = join(OUTPUT_DIR, filename);
+  if (!filePath.startsWith(OUTPUT_DIR)) {
+    sendJson(res, 403, { error: "Forbidden" });
+    return;
+  }
+
+  try {
+    await unlink(filePath);
+    sendJson(res, 200, { ok: true, filename });
+  } catch (error) {
+    sendJson(res, 404, { error: error?.code === "ENOENT" ? "Output image not found." : error?.message || String(error) });
+  }
+}
+
 const server = createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/api/models") {
     await handleModels(req, res);
@@ -1393,6 +1428,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && req.url === "/api/outputs") {
     await handleOutputs(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/outputs/delete") {
+    await handleDeleteOutput(req, res);
     return;
   }
 

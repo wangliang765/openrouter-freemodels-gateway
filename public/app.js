@@ -844,14 +844,38 @@ function renderOutputGallery() {
         <strong></strong>
         <span>${modified} · ${formatBytes(image.bytes)}</span>
       </div>
-      <a class="download" target="_blank" rel="noreferrer">打开原图</a>
+      <div class="output-actions">
+        <a class="download" target="_blank" rel="noreferrer">打开原图</a>
+        <button type="button" class="secondary danger">删除</button>
+      </div>
     `;
     const preview = card.querySelector(".output-preview");
     preview.href = image.url;
     preview.innerHTML = `<img alt="Saved output ${image.filename}" src="${image.url}" loading="lazy" />`;
     card.querySelector("strong").textContent = image.filename;
     card.querySelector(".download").href = image.url;
+    card.querySelector("button").addEventListener("click", () => deleteOutputImage(image.filename));
     outputGallery.append(card);
+  }
+}
+
+async function deleteOutputImage(filename) {
+  if (!filename) return;
+  if (!confirm(`删除本地图片 ${filename}？`)) return;
+
+  outputSummary.textContent = `正在删除 ${filename}...`;
+  try {
+    const response = await fetch("/api/outputs/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    outputImages = outputImages.filter((image) => image.filename !== filename);
+    renderOutputGallery();
+  } catch (error) {
+    outputSummary.textContent = error.message || "删除图片失败。";
   }
 }
 

@@ -9,7 +9,7 @@
 - Allow running chat requests to be stopped from the local page.
 - Let image generation choose a free image model.
 - Allow running image batches to be stopped from the local page.
-- Provide a local gallery for saved image outputs.
+- Provide a local gallery for saved image outputs, including local file deletion.
 - Keep API keys in browser localStorage for this local-only phase.
 - Persist selected models and task parameters in browser localStorage.
 - Record and persist model health from real requests without spending quota on automatic probes.

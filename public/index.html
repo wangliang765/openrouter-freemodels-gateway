@@ -19,6 +19,7 @@
           <button id="keyPoolTab" class="tab" type="button" data-view="keyPoolView">key池管理</button>
           <button id="modelManagerTab" class="tab" type="button" data-view="modelManagerView">模型管理</button>
           <button id="activityTab" class="tab" type="button" data-view="activityView">运行记录</button>
+          <button id="localDataTab" class="tab" type="button" data-view="localDataView">本地数据</button>
         </nav>
         <span id="serverState" class="status idle">就绪</span>
       </header>
@@ -271,6 +272,36 @@
             </div>
 
             <div id="activityList" class="activity-list" aria-live="polite"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="localDataView" class="view">
+        <div class="local-data-page">
+          <section class="panel local-data-manager">
+            <div class="title-row">
+              <div>
+                <h2>本地数据</h2>
+                <p id="localDataSummary">正在读取本地数据</p>
+              </div>
+            </div>
+
+            <div class="local-data-grid">
+              <article class="local-data-item">
+                <strong>导出备份</strong>
+                <p>导出提示词模板、模型缓存、聊天记录和运行记录。备份文件不包含 API key。</p>
+                <button id="exportLocalDataButton" type="button" class="secondary">导出本地数据</button>
+              </article>
+
+              <article class="local-data-item">
+                <strong>导入备份</strong>
+                <p>从之前导出的 JSON 恢复本地数据。导入后会立即刷新页面中的模板、模型和记录。</p>
+                <input id="localDataImportInput" class="file-input" type="file" accept="application/json,.json" />
+                <button id="importLocalDataButton" type="button" class="secondary">选择备份文件</button>
+              </article>
+            </div>
+
+            <p id="localDataStatus" class="local-data-status" aria-live="polite">等待操作。</p>
           </section>
         </div>
       </section>

@@ -49,6 +49,7 @@ textarea {
 
 .tabs {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 4px;
   border: 1px solid var(--line);
@@ -93,7 +94,8 @@ textarea {
 
 .chat-workspace,
 .model-page,
-.activity-page {
+.activity-page,
+.local-data-page {
   display: grid;
   grid-template-columns: minmax(320px, 980px);
   justify-content: center;
@@ -105,7 +107,8 @@ textarea {
 
 .chat-panel,
 .model-manager,
-.activity-manager {
+.activity-manager,
+.local-data-manager {
   padding: 20px;
 }
 
@@ -565,6 +568,42 @@ select:focus {
   color: var(--error) !important;
 }
 
+.local-data-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.local-data-item {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.local-data-item strong {
+  color: var(--accent-strong);
+}
+
+.local-data-item p,
+.local-data-status {
+  color: var(--muted);
+  line-height: 1.45;
+  font-size: 13px;
+}
+
+.local-data-status {
+  margin-top: 14px;
+}
+
+.file-input {
+  display: none;
+}
+
 .actions {
   margin-top: 18px;
 }
@@ -731,7 +770,7 @@ progress {
   }
 
   .tab {
-    flex: 1;
+    flex: 1 1 92px;
   }
 
   .workspace {
@@ -747,6 +786,10 @@ progress {
   }
 
   .activity-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .local-data-grid {
     grid-template-columns: 1fr;
   }
 

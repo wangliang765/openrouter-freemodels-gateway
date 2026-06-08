@@ -15,6 +15,7 @@ Open http://localhost:3000.
 - Add one or more OpenRouter API keys in `key池管理` before chatting or generating images.
 - Use `聊天` for text models, `生图` for image models, `模型管理` for OpenRouter free-model discovery, and `key池管理` for API key management.
 - Use `运行记录` to review local chat/image attempts, filter success/failure/limit states, export JSON, or clear local activity history.
+- Use `本地数据` to export or import local prompt templates, model cache, chat history, and activity logs. Backups do not include API keys.
 - API keys in the page key pool are saved in browser localStorage and remain after refresh.
 - The app only uses keys currently shown in the page key pool. `.env` is not used as a fallback.
 - `模型管理` refreshes OpenRouter `/api/v1/models`, filters free models, and separates text and image models.
@@ -30,6 +31,7 @@ Open http://localhost:3000.
 - Successful base64 images are saved to the local `outputs/` directory and shown in the result card.
 - Prompt templates are saved in browser localStorage and do not store API keys.
 - Runtime activity logs are saved in browser localStorage and store only masked key labels, model IDs, status, timing, errors, and saved output paths.
+- Local data backups are JSON files for non-sensitive localStorage data only; API keys must be added again on another browser or computer.
 
 ## Roadmap
 

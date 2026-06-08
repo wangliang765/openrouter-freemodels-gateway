@@ -46,6 +46,11 @@ const activityStatusFilter = document.querySelector("#activityStatusFilter");
 const activityList = document.querySelector("#activityList");
 const exportActivityButton = document.querySelector("#exportActivityButton");
 const clearActivityButton = document.querySelector("#clearActivityButton");
+const localDataSummary = document.querySelector("#localDataSummary");
+const exportLocalDataButton = document.querySelector("#exportLocalDataButton");
+const importLocalDataButton = document.querySelector("#importLocalDataButton");
+const localDataImportInput = document.querySelector("#localDataImportInput");
+const localDataStatus = document.querySelector("#localDataStatus");
 const viewTabs = document.querySelectorAll(".tab");
 const views = document.querySelectorAll(".view");
 
@@ -60,6 +65,13 @@ const MODEL_CACHE_KEY = "openrouter.modelCache";
 const CHAT_MESSAGES_KEY = "openrouter.chatMessages";
 const ACTIVITY_LOG_KEY = "openrouter.activityLog";
 const MAX_ACTIVITY_ITEMS = 200;
+const LOCAL_BACKUP_VERSION = 1;
+const LOCAL_BACKUP_ITEMS = [
+  { key: TEMPLATE_KEY, label: "提示词模板", fallback: {} },
+  { key: MODEL_CACHE_KEY, label: "模型缓存", fallback: null },
+  { key: CHAT_MESSAGES_KEY, label: "聊天记录", fallback: [] },
+  { key: ACTIVITY_LOG_KEY, label: "运行记录", fallback: [] }
+];
 
 let activeRun = false;
 let activeChat = false;
@@ -231,6 +243,22 @@ function addActivity(entry) {
   activityLog = [item, ...activityLog].slice(0, MAX_ACTIVITY_ITEMS);
   writeStoredActivityLog();
   renderActivityLog();
+}
+
+function isPlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function downloadJson(filename, payload) {
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function nextBeijing8ResetAt(now = new Date()) {
@@ -704,14 +732,101 @@ function renderActivityLog() {
 }
 
 function exportActivityLog() {
-  const blob = new Blob([`${JSON.stringify(activityLog, null, 2)}\n`], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  link.href = url;
-  link.download = `openrouter-activity-${stamp}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+  downloadJson(`openrouter-activity-${stamp}.json`, activityLog);
+}
+
+function backupValueForKey(key) {
+  if (key === TEMPLATE_KEY) return readTemplates();
+  if (key === MODEL_CACHE_KEY) return modelCache;
+  if (key === CHAT_MESSAGES_KEY) return chatMessages.slice(-40);
+  if (key === ACTIVITY_LOG_KEY) return activityLog.slice(0, MAX_ACTIVITY_ITEMS);
+  return readJsonStorage(key, null);
+}
+
+function buildLocalBackup() {
+  const data = {};
+  for (const item of LOCAL_BACKUP_ITEMS) {
+    data[item.key] = backupValueForKey(item.key);
+  }
+
+  return {
+    app: "openrouter-freemodels-gateway",
+    version: LOCAL_BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    includesApiKeys: false,
+    data
+  };
+}
+
+function exportLocalData() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  downloadJson(`openrouter-local-data-${stamp}.json`, buildLocalBackup());
+  localDataStatus.textContent = "已导出本地数据备份，文件不包含 API key。";
+}
+
+function validBackupValue(key, value) {
+  if (key === TEMPLATE_KEY) return isPlainObject(value);
+  if (key === MODEL_CACHE_KEY) return isPlainObject(value) && (Array.isArray(value.text) || Array.isArray(value.image) || Array.isArray(value.models));
+  if (key === CHAT_MESSAGES_KEY) return Array.isArray(value);
+  if (key === ACTIVITY_LOG_KEY) return Array.isArray(value);
+  return false;
+}
+
+function reloadLocalBackupState() {
+  modelCache = readStoredModelCache();
+  chatMessages = readStoredChatMessages();
+  activityLog = readStoredActivityLog();
+  refreshTemplates();
+  renderModelLists();
+  renderChatMessages();
+  renderActivityLog();
+  renderLocalDataSummary();
+}
+
+function importLocalBackupText(text) {
+  const parsed = JSON.parse(text);
+  const data = isPlainObject(parsed?.data) ? parsed.data : parsed;
+  if (!isPlainObject(data)) throw new Error("备份文件格式不正确。");
+
+  const imported = [];
+  const skipped = [];
+  for (const item of LOCAL_BACKUP_ITEMS) {
+    if (!Object.prototype.hasOwnProperty.call(data, item.key)) continue;
+    const value = data[item.key];
+    if (!validBackupValue(item.key, value)) {
+      skipped.push(item.label);
+      continue;
+    }
+    writeJsonStorage(item.key, value);
+    imported.push(item.label);
+  }
+
+  if (!imported.length) throw new Error("备份文件里没有可导入的本地数据。");
+  reloadLocalBackupState();
+  return { imported, skipped };
+}
+
+async function importLocalDataFromFile() {
+  const file = localDataImportInput.files?.[0];
+  if (!file) return;
+
+  try {
+    const result = importLocalBackupText(await file.text());
+    localDataStatus.textContent = `已导入：${result.imported.join("、")}${result.skipped.length ? `；已跳过：${result.skipped.join("、")}` : ""}。`;
+    setState("本地数据已导入", "idle");
+  } catch (error) {
+    localDataStatus.textContent = error.message || "导入失败。";
+    setState("导入失败", "error");
+  } finally {
+    localDataImportInput.value = "";
+  }
+}
+
+function renderLocalDataSummary() {
+  const templates = Object.keys(readTemplates()).length;
+  const modelCount = (modelCache.text?.length || 0) + (modelCache.image?.length || 0);
+  localDataSummary.textContent = `${templates} 个模板 · ${modelCount} 个模型缓存 · ${chatMessages.length} 条聊天 · ${activityLog.length} 条运行记录 · 不包含 API key`;
 }
 
 async function loadModels() {
@@ -1278,6 +1393,8 @@ function showView(viewId) {
   for (const tab of viewTabs) {
     tab.classList.toggle("active", tab.dataset.view === viewId);
   }
+
+  if (viewId === "localDataView") renderLocalDataSummary();
 }
 
 sendChatButton.addEventListener("click", sendChat);
@@ -1380,7 +1497,11 @@ clearActivityButton.addEventListener("click", () => {
   activityLog = [];
   writeStoredActivityLog();
   renderActivityLog();
+  renderLocalDataSummary();
 });
+exportLocalDataButton.addEventListener("click", exportLocalData);
+importLocalDataButton.addEventListener("click", () => localDataImportInput.click());
+localDataImportInput.addEventListener("change", importLocalDataFromFile);
 
 refreshTemplates();
 syncQueueControls();
@@ -1388,6 +1509,7 @@ renderModelLists();
 renderChatMessages();
 renderApiKeys();
 renderActivityLog();
+renderLocalDataSummary();
 updateProgress();
 loadModels();
 

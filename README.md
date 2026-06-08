@@ -27,7 +27,7 @@ Open http://localhost:3000.
 - `Per-key concurrency` is applied to every active key. For example, 4 keys with concurrency 2 can run up to 8 tasks at once.
 - When a key hits `free-models-per-day`, it is marked `daily-limited` and skipped for the rest of the batch.
 - Daily-limited keys are stored with a reset timestamp and automatically return to ready after the next Beijing 08:00 reset.
-- `Refresh quota` calls OpenRouter `/api/v1/key`; free-model daily total is inferred from account tier, and remaining count is locally estimated when OpenRouter does not expose it.
+- `Refresh quota` calls OpenRouter `/api/v1/key`; request results also read `X-RateLimit-*` headers when OpenRouter returns them, with local estimation used as a fallback.
 - `Rate limited` responses are not retried on the same key. The task is returned to the queue and assigned to another active key.
 - `Queue mode` forces each key to run one request at a time and waits between tasks.
 - `Retry count` and `Wait seconds` control automatic retry for network interruptions, timeouts, and temporary 5xx errors.

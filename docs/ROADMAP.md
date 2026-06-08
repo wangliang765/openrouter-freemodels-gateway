@@ -13,6 +13,7 @@
 - Keep API keys in browser localStorage for this local-only phase.
 - Persist selected models and task parameters in browser localStorage.
 - Record and persist model health from real requests without spending quota on automatic probes.
+- Update key quota display from OpenRouter `X-RateLimit-*` response headers when available.
 - Keep a local activity log for chat/image attempts, saved output paths, and request errors.
 - Support local export/import for non-sensitive browser data without including API keys.
 

@@ -503,6 +503,38 @@ function isChargedOpenRouterError(error) {
   return message.includes("OpenRouter returned no image URLs");
 }
 
+function parseOpenRouterRateLimitHeaders(rawHeaders) {
+  const blocks = String(rawHeaders || "")
+    .split(/\r?\n\r?\n/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  const latest = blocks.reverse().find((block) => /^HTTP\//i.test(block));
+  if (!latest) return null;
+
+  const headers = {};
+  for (const line of latest.split(/\r?\n/).slice(1)) {
+    const separator = line.indexOf(":");
+    if (separator === -1) continue;
+    headers[line.slice(0, separator).trim().toLowerCase()] = line.slice(separator + 1).trim();
+  }
+
+  const limit = Number(headers["x-ratelimit-limit"]);
+  const remaining = Number(headers["x-ratelimit-remaining"]);
+  const resetAt = Number(headers["x-ratelimit-reset"]);
+  if (!Number.isFinite(limit) && !Number.isFinite(remaining) && !Number.isFinite(resetAt)) return null;
+
+  return {
+    limit: Number.isFinite(limit) ? limit : null,
+    remaining: Number.isFinite(remaining) ? remaining : null,
+    resetAt: Number.isFinite(resetAt) ? resetAt : null
+  };
+}
+
+function attachRateLimit(error, rateLimit) {
+  if (rateLimit) error.rateLimit = rateLimit;
+  return error;
+}
+
 function freeDailyLimitForKeyInfo(data) {
   return data?.is_free_tier ? 50 : 1000;
 }
@@ -673,6 +705,7 @@ async function requestOpenRouterKeyInfo(apiKey, signal) {
 
 async function requestOpenRouter({ apiKey, body, signal, maxTime = 300 }) {
   const bodyPath = join(tmpdir(), `openrouter-gateway-${randomUUID()}.json`);
+  const headerPath = join(tmpdir(), `openrouter-gateway-${randomUUID()}.headers`);
   await writeFile(bodyPath, JSON.stringify(body), "utf8");
 
   try {
@@ -686,6 +719,8 @@ async function requestOpenRouter({ apiKey, body, signal, maxTime = 300 }) {
           OPENROUTER_URL,
           "--config",
           "-",
+          "-D",
+          headerPath,
           "-o",
           "-",
           "-w",
@@ -721,19 +756,21 @@ async function requestOpenRouter({ apiKey, body, signal, maxTime = 300 }) {
       child.stdout.on("data", (chunk) => stdout.push(chunk));
       child.stderr.on("data", (chunk) => stderr.push(chunk));
       child.on("error", (error) => finish(error));
-      child.on("close", (code) => {
+      child.on("close", async (code) => {
         signal?.removeEventListener("abort", abort);
         const output = Buffer.concat(stdout).toString("utf8");
         const errorOutput = Buffer.concat(stderr).toString("utf8").trim();
+        const rawHeaders = await readFile(headerPath, "utf8").catch(() => "");
+        const rateLimit = parseOpenRouterRateLimitHeaders(rawHeaders);
         const marker = "\n__OPENROUTER_STATUS__:";
         const markerIndex = output.lastIndexOf(marker);
 
         if (markerIndex === -1) {
           if (output && !output.trim() && /Operation timed out|server closed abruptly/i.test(errorOutput)) {
-            finish(new Error("OpenRouter provider returned an empty unfinished response. No image data was received."));
+            finish(attachRateLimit(new Error("OpenRouter provider returned an empty unfinished response. No image data was received."), rateLimit));
             return;
           }
-          finish(new Error(errorOutput || `curl exited with code ${code}`));
+          finish(attachRateLimit(new Error(errorOutput || `curl exited with code ${code}`), rateLimit));
           return;
         }
 
@@ -742,14 +779,14 @@ async function requestOpenRouter({ apiKey, body, signal, maxTime = 300 }) {
 
         if (code !== 0) {
           if (status === 200 && !text.trim() && /Operation timed out|server closed abruptly/i.test(errorOutput)) {
-            finish(new Error("OpenRouter provider returned an empty unfinished response. No image data was received."));
+            finish(attachRateLimit(new Error("OpenRouter provider returned an empty unfinished response. No image data was received."), rateLimit));
             return;
           }
-          finish(new Error(errorOutput || `curl exited with code ${code}`));
+          finish(attachRateLimit(new Error(errorOutput || `curl exited with code ${code}`), rateLimit));
           return;
         }
 
-        finish(null, { status, text });
+        finish(null, { status, text, rateLimit });
       });
 
       const config = [
@@ -765,6 +802,7 @@ async function requestOpenRouter({ apiKey, body, signal, maxTime = 300 }) {
     });
   } finally {
     await unlink(bodyPath).catch(() => {});
+    await unlink(headerPath).catch(() => {});
   }
 }
 
@@ -796,7 +834,7 @@ async function generateImage({ prompt, options, apiKey, signal }) {
     requestBody.image_config = imageConfig;
   }
 
-  const { status, text } = await requestOpenRouter({
+  const { status, text, rateLimit } = await requestOpenRouter({
     apiKey,
     signal,
     body: requestBody,
@@ -808,7 +846,7 @@ async function generateImage({ prompt, options, apiKey, signal }) {
   if (status < 200 || status >= 300) {
     const detail = data?.error?.message || data?.message || text || "Request failed";
     updateModelHealth(modelInfo.id, status === 429 ? "rate-limited" : "error", detail, "image");
-    throw new Error(`OpenRouter ${status}: ${detail}`);
+    throw attachRateLimit(new Error(`OpenRouter ${status}: ${detail}`), rateLimit);
   }
 
   const images = extractImages(data);
@@ -817,7 +855,7 @@ async function generateImage({ prompt, options, apiKey, signal }) {
     const reason = data?.choices?.[0]?.finish_reason ? ` finish_reason=${data.choices[0].finish_reason}.` : "";
     const message = textContent || `OpenRouter returned no image URLs for this request.${reason}`;
     updateModelHealth(modelInfo.id, "no-image", message, "image");
-    throw new Error(message);
+    throw attachRateLimit(new Error(message), rateLimit);
   }
 
   const savedImages = await saveImages(images);
@@ -828,7 +866,8 @@ async function generateImage({ prompt, options, apiKey, signal }) {
     originalImages: savedImages.map((image) => image.original),
     savedImages,
     text: textContent,
-    model: modelInfo.id
+    model: modelInfo.id,
+    rateLimit
   };
 }
 
@@ -850,7 +889,7 @@ async function generateText({ messages, options, apiKey, signal }) {
     if (Number.isFinite(temperature)) requestBody.temperature = temperature;
   }
 
-  const { status, text } = await requestOpenRouter({
+  const { status, text, rateLimit } = await requestOpenRouter({
     apiKey,
     signal,
     body: requestBody,
@@ -861,21 +900,22 @@ async function generateText({ messages, options, apiKey, signal }) {
   if (status < 200 || status >= 300) {
     const detail = data?.error?.message || data?.message || text || "Request failed";
     updateModelHealth(modelInfo.id, status === 429 ? "rate-limited" : "error", detail, "text");
-    throw new Error(`OpenRouter ${status}: ${detail}`);
+    throw attachRateLimit(new Error(`OpenRouter ${status}: ${detail}`), rateLimit);
   }
 
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== "string") {
     const message = "OpenRouter returned no assistant text for this request.";
     updateModelHealth(modelInfo.id, "no-text", message, "text");
-    throw new Error(message);
+    throw attachRateLimit(new Error(message), rateLimit);
   }
 
   updateModelHealth(modelInfo.id, "ok", "", "text");
   return {
     message: { role: "assistant", content },
     usage: data?.usage || null,
-    model: data?.model || modelInfo.id
+    model: data?.model || modelInfo.id,
+    rateLimit
   };
 }
 
@@ -1056,6 +1096,7 @@ async function handleChat(req, res) {
       sendJson(res, 502, {
         error: error?.message || String(error),
         charged: isChargedOpenRouterError(error),
+        rateLimit: error?.rateLimit || null,
         durationMs: Date.now() - startedAt,
         key: { id: keyEntry.id, label: keyEntry.label },
         apiKeys: keyPool.snapshot()
@@ -1212,6 +1253,7 @@ async function handleBatch(req, res) {
             prompt,
             key: { id: keyEntry.id, label: keyEntry.label, status: keyEntry.status },
             apiKeys: keyPool.snapshot(),
+            rateLimit: error?.rateLimit || null,
             error: error?.message || String(error)
           });
         } else {
@@ -1224,6 +1266,7 @@ async function handleBatch(req, res) {
             key: { id: keyEntry.id, label: keyEntry.label },
             durationMs: Date.now() - startedAt,
             charged: isChargedOpenRouterError(error),
+            rateLimit: error?.rateLimit || null,
             error: error?.message || String(error)
           });
         }

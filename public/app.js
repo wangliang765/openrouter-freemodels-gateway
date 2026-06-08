@@ -377,11 +377,11 @@ function refreshDailyKeyState() {
   return limitsChanged || quotasChanged;
 }
 
-function markApiKeyDailyLimited(key) {
+function markApiKeyDailyLimited(key, resetAt = nextBeijing8ResetAt()) {
   if (!key) return;
   apiKeyLimits[key] = {
     status: "daily-limited",
-    resetAt: nextBeijing8ResetAt()
+    resetAt
   };
   writeStoredApiKeyLimits();
 }
@@ -434,6 +434,53 @@ function remainingQuotaForKey(key) {
   const free = freeInfoForKey(key);
   if (!free) return "unknown";
   return formatNullable(free.remaining);
+}
+
+function normalizeRateLimitReset(resetAt) {
+  const value = Number(resetAt);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value < 1000000000000 ? value * 1000 : value;
+}
+
+function applyRateLimitQuota(key, rateLimit) {
+  if (!key || !rateLimit) return false;
+
+  const limit = Number(rateLimit.limit);
+  const remaining = Number(rateLimit.remaining);
+  const resetAt = normalizeRateLimitReset(rateLimit.resetAt);
+  const hasLimit = Number.isFinite(limit) && limit >= 0;
+  const hasRemaining = Number.isFinite(remaining) && remaining >= 0;
+  if (!hasLimit && !hasRemaining && !resetAt) return false;
+
+  const previous = apiKeyInfo[key] || {
+    label: maskApiKey(key),
+    status: "ok"
+  };
+  const previousFree = previous.freeModels || {};
+  const nextFree = {
+    ...previousFree,
+    total: hasLimit ? limit : previousFree.total ?? null,
+    remaining: hasRemaining ? remaining : previousFree.remaining ?? null,
+    resetAt,
+    source: "response-header",
+    updatedAt: Date.now(),
+    note: "Updated from OpenRouter X-RateLimit response headers."
+  };
+
+  apiKeyInfo[key] = {
+    ...previous,
+    label: previous.label || maskApiKey(key),
+    status: previous.status === "error" ? "ok" : previous.status || "ok",
+    checkedAt: previous.checkedAt || Date.now(),
+    freeModels: nextFree
+  };
+  writeStoredApiKeyInfo();
+
+  if (hasRemaining && remaining <= 0) {
+    markApiKeyDailyLimited(key, resetAt || nextBeijing8ResetAt());
+  }
+
+  return true;
 }
 
 function decrementEstimatedRemaining(key) {
@@ -1179,7 +1226,10 @@ async function sendChat() {
     if (!response.ok) throw Object.assign(new Error(data.error || response.statusText), { data });
 
     applyServerKeyStatuses(data.apiKeys);
-    if (Number.isInteger(data.key?.id)) decrementEstimatedRemaining(chatKeys[data.key.id]);
+    if (Number.isInteger(data.key?.id)) {
+      const key = chatKeys[data.key.id];
+      if (!applyRateLimitQuota(key, data.rateLimit)) decrementEstimatedRemaining(key);
+    }
     chatMessages.push(data.message);
     writeStoredChatMessages();
     renderChatMessages();
@@ -1211,6 +1261,10 @@ async function sendChat() {
     }
 
     applyServerKeyStatuses(error.data?.apiKeys || []);
+    if (Number.isInteger(error.data?.key?.id)) {
+      const key = chatKeys[error.data.key.id];
+      applyRateLimitQuota(key, error.data?.rateLimit);
+    }
     chatMessages.push({ role: "assistant", content: `错误：${error.message}` });
     writeStoredChatMessages();
     renderChatMessages();
@@ -1313,8 +1367,9 @@ function appendCardNote(index, text) {
 
 function markKeyLimited(event) {
   const key = Number.isInteger(event.key?.id) ? currentBatchKeys[event.key.id] : "";
+  applyRateLimitQuota(key, event.rateLimit);
   if (event.key?.status === "daily-limited") {
-    markApiKeyDailyLimited(key);
+    markApiKeyDailyLimited(key, normalizeRateLimitReset(event.rateLimit?.resetAt) || nextBeijing8ResetAt());
     const free = freeInfoForKey(key);
     if (free) {
       free.remaining = 0;
@@ -1385,7 +1440,7 @@ function markDone(event) {
   if (!card) return;
   stopTaskTimer(event.index);
   const key = Number.isInteger(event.key?.id) ? currentBatchKeys[event.key.id] : "";
-  decrementEstimatedRemaining(key);
+  if (!applyRateLimitQuota(key, event.rateLimit)) decrementEstimatedRemaining(key);
   renderApiKeys();
 
   const preview = card.querySelector(".preview");
@@ -1428,8 +1483,9 @@ function markError(event) {
   if (!card) return;
   stopTaskTimer(event.index);
 
-  if (event.charged && Number.isInteger(event.key?.id)) {
-    decrementEstimatedRemaining(currentBatchKeys[event.key.id]);
+  if (Number.isInteger(event.key?.id)) {
+    const key = currentBatchKeys[event.key.id];
+    if (!applyRateLimitQuota(key, event.rateLimit) && event.charged) decrementEstimatedRemaining(key);
     renderApiKeys();
   }
 

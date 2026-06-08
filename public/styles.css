@@ -388,6 +388,53 @@ select:focus {
   margin-top: 18px;
 }
 
+.model-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 260px);
+  gap: 12px;
+}
+
+.model-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.health-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: #f6f2e9;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.health-chip.ok {
+  color: var(--accent-strong);
+  border-color: rgba(15, 118, 110, 0.3);
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.health-chip.error,
+.health-chip.no-image,
+.health-chip.no-text,
+.health-chip.provider-timeout {
+  color: var(--error);
+  border-color: rgba(173, 31, 43, 0.28);
+  background: rgba(173, 31, 43, 0.08);
+}
+
+.health-chip.rate-limited {
+  color: var(--warn);
+  border-color: rgba(164, 73, 18, 0.3);
+  background: rgba(164, 73, 18, 0.08);
+}
+
 .model-list {
   display: grid;
   gap: 8px;
@@ -424,6 +471,19 @@ select:focus {
   color: var(--muted);
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.model-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.model-card-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .model-card .model-error,
@@ -608,6 +668,10 @@ progress {
   }
 
   .model-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .model-tools {
     grid-template-columns: 1fr;
   }
 

@@ -35,6 +35,9 @@ const serverState = document.querySelector("#serverState");
 const keyPoolSummary = document.querySelector("#keyPoolSummary");
 const refreshModelsButton = document.querySelector("#refreshModelsButton");
 const modelSummary = document.querySelector("#modelSummary");
+const modelSearchInput = document.querySelector("#modelSearch");
+const modelStatusFilter = document.querySelector("#modelStatusFilter");
+const modelHealthStats = document.querySelector("#modelHealthStats");
 const textModelList = document.querySelector("#textModelList");
 const imageModelList = document.querySelector("#imageModelList");
 const viewTabs = document.querySelectorAll(".tab");
@@ -462,23 +465,118 @@ function renderModelSelectors() {
   setSelectOptions(imageModelSelect, modelCache.image || [], DEFAULT_IMAGE_MODEL);
 }
 
+function modelStatusLabel(status) {
+  const labels = {
+    ok: "可用",
+    unknown: "未知",
+    seeded: "默认种子",
+    "rate-limited": "额度限制",
+    error: "错误",
+    "no-text": "无文本返回",
+    "no-image": "无图片返回",
+    "provider-timeout": "服务超时"
+  };
+  return labels[status] || status || "未知";
+}
+
+function modelMatchesFilters(model) {
+  const query = (modelSearchInput.value || "").trim().toLowerCase();
+  const status = modelStatusFilter.value || "all";
+  const modelStatus = model.status || "unknown";
+
+  if (status !== "all" && modelStatus !== status) return false;
+  if (!query) return true;
+
+  const haystack = [
+    model.id,
+    model.name,
+    model.type,
+    modelStatus,
+    ...(model.inputModalities || []),
+    ...(model.outputModalities || []),
+    ...(model.supportedParameters || [])
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return haystack.includes(query);
+}
+
+function renderModelHealthStats(models) {
+  modelHealthStats.innerHTML = "";
+  const counts = models.reduce((acc, model) => {
+    const status = model.status || "unknown";
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+
+  const statuses = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (!statuses.length) {
+    modelHealthStats.append(emptyModelState("还没有模型健康数据。"));
+    return;
+  }
+
+  for (const [status, count] of statuses) {
+    const item = document.createElement("span");
+    item.className = `health-chip ${status}`;
+    item.textContent = `${modelStatusLabel(status)} ${count}`;
+    modelHealthStats.append(item);
+  }
+}
+
+function selectModelForUse(model, target) {
+  if (target === "chat") {
+    chatModelSelect.value = model.id;
+    showView("chatView");
+    setState("已选择聊天模型", "idle");
+    return;
+  }
+
+  imageModelSelect.value = model.id;
+  showView("generateView");
+  setState("已选择生图模型", "idle");
+}
+
 function renderModelCard(model) {
   const div = document.createElement("div");
   div.className = `model-card ${model.status || "unknown"}`;
   const params = (model.supportedParameters || []).slice(0, 5).join(", ") || "default";
-  const updated = model.updatedAt ? new Date(model.updatedAt).toLocaleString() : "unknown";
+  const updated = model.updatedAt ? new Date(model.updatedAt).toLocaleString() : "未知";
+  const typeLabel = model.type === "image" ? "生图" : model.type === "mixed" ? "混合" : "文本";
   div.innerHTML = `
     <div>
       <strong></strong>
       <code></code>
     </div>
-    <span>${model.type || "model"} · ${model.status || "unknown"}</span>
-    <small>Params: ${params}</small>
-    <small>Updated: ${updated}</small>
+    <span>${typeLabel} · ${modelStatusLabel(model.status)}</span>
+    <small>参数：${params}</small>
+    <small>更新：${updated}</small>
     ${model.lastError ? `<small class="model-error">${model.lastError}</small>` : ""}
   `;
   div.querySelector("strong").textContent = model.name || model.id;
   div.querySelector("code").textContent = model.id;
+
+  const actions = document.createElement("div");
+  actions.className = "model-card-actions";
+  if (model.type === "text" || model.type === "mixed") {
+    const useChatButton = document.createElement("button");
+    useChatButton.type = "button";
+    useChatButton.className = "secondary";
+    useChatButton.textContent = "用于聊天";
+    useChatButton.addEventListener("click", () => selectModelForUse(model, "chat"));
+    actions.append(useChatButton);
+  }
+  if (model.type === "image" || model.type === "mixed") {
+    const useImageButton = document.createElement("button");
+    useImageButton.type = "button";
+    useImageButton.className = "secondary";
+    useImageButton.textContent = "用于生图";
+    useImageButton.addEventListener("click", () => selectModelForUse(model, "image"));
+    actions.append(useImageButton);
+  }
+  if (actions.childElementCount) div.append(actions);
+
   return div;
 }
 
@@ -486,16 +584,19 @@ function renderModelLists() {
   textModelList.innerHTML = "";
   imageModelList.innerHTML = "";
 
-  const textModels = modelCache.text || [];
-  const imageModels = modelCache.image || [];
+  const allModels = modelCache.models || [...(modelCache.text || []), ...(modelCache.image || [])];
+  const textModels = (modelCache.text || []).filter(modelMatchesFilters);
+  const imageModels = (modelCache.image || []).filter(modelMatchesFilters);
+  renderModelHealthStats(allModels);
+
   for (const model of textModels) textModelList.append(renderModelCard(model));
   for (const model of imageModels) imageModelList.append(renderModelCard(model));
 
-  if (!textModels.length) textModelList.append(emptyModelState("还没有缓存免费文本模型。"));
-  if (!imageModels.length) imageModelList.append(emptyModelState("还没有缓存免费生图模型。"));
+  if (!textModels.length) textModelList.append(emptyModelState("没有匹配的免费文本模型。"));
+  if (!imageModels.length) imageModelList.append(emptyModelState("没有匹配的免费生图模型。"));
 
   const refreshed = modelCache.refreshedAt ? new Date(modelCache.refreshedAt).toLocaleString() : "尚未刷新";
-  modelSummary.textContent = `${textModels.length} 个文本 / ${imageModels.length} 个生图免费模型 · 刷新时间 ${refreshed}${modelCache.error ? ` · ${modelCache.error}` : ""}`;
+  modelSummary.textContent = `${modelCache.text?.length || 0} 个文本 / ${modelCache.image?.length || 0} 个生图免费模型 · 当前显示 ${textModels.length + imageModels.length} 个 · 刷新时间 ${refreshed}${modelCache.error ? ` · ${modelCache.error}` : ""}`;
   renderModelSelectors();
 }
 
@@ -1117,6 +1218,8 @@ clearApiKeysButton.addEventListener("click", () => {
 
 refreshQuotaButton.addEventListener("click", refreshQuota);
 refreshModelsButton.addEventListener("click", refreshModels);
+modelSearchInput.addEventListener("input", renderModelLists);
+modelStatusFilter.addEventListener("change", renderModelLists);
 
 refreshTemplates();
 syncQueueControls();

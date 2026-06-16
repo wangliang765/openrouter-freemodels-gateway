@@ -24,8 +24,8 @@ Invoke-WebRequest -UseBasicParsing http://localhost:3000/api/health
 - Use `图片库` to search, review, or delete recently saved images from the local `outputs/` directory.
 - Use `运行记录` to review local chat/image attempts, search/filter success/failure/limit states, export all records or the current filtered view as JSON, or clear local activity history.
 - Use `本地数据` to export or import current settings, local prompt templates, model cache, chat history, and activity logs. Backups do not include API keys.
-- API keys in the page key pool are saved in browser localStorage and remain after refresh.
-- The app only uses keys currently shown in the page key pool. `.env` is not used as a fallback.
+- OpenRouter API keys in `key池管理` are saved server-side in `data/openrouter-api-keys.json` and are shared by the web UI and `/v1` API.
+- `OPENROUTER_API_KEYS` / `OPENROUTER_API_KEY` are still supported as environment-managed upstream keys.
 - `模型管理` refreshes OpenRouter `/api/v1/models`, filters free models, separates text and image models, and can copy model IDs for testing.
 - Model metadata and request-derived health status are cached in local `data/model-cache.json`; this file is ignored by git.
 - Chat and image generation both use the selected model from the page dropdowns.
@@ -48,6 +48,40 @@ Invoke-WebRequest -UseBasicParsing http://localhost:3000/api/health
 - Prompt templates are saved in browser localStorage and do not store API keys.
 - Runtime activity logs are saved in browser localStorage and store only masked key labels, model IDs, status, timing, errors, and saved output paths.
 - Local data backups are JSON files for non-sensitive localStorage data only; API keys must be added again on another browser or computer.
+
+## OpenAI-compatible API MVP
+
+The service also exposes a local OpenAI-compatible API under `/v1` for other apps:
+
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+- `POST /v1/images/generations`
+
+Configure the upstream OpenRouter key set in `key池管理`, or via environment variables:
+
+```powershell
+$env:OPENROUTER_API_KEYS="sk-or-v1-...,sk-or-v1-..."
+npm start
+```
+
+- `OPENROUTER_API_KEYS` are optional environment-managed upstream OpenRouter keys used by the gateway.
+- Service API keys accepted by this gateway can be created in `key池管理` -> `对外服务 API Key`.
+- `GATEWAY_API_KEYS` / `GATEWAY_API_KEY` are still supported for environment-managed service keys.
+- `DEFAULT_SERVICE_KEY_CONCURRENCY` controls per service-key image concurrency. Default: `4`.
+- `DEFAULT_IMAGE_N` controls the default image count when `/v1/images/generations` omits `n`. Default: `20`.
+- `MAX_IMAGE_N` controls the maximum accepted `n`. Default: the configured default image count.
+- In OpenAI image requests, `n` means image count, not concurrency.
+
+Example:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://localhost:3000/v1/images/generations `
+  -Headers @{ Authorization = "Bearer local-dev-key" } `
+  -ContentType "application/json" `
+  -Body '{"model":"gpt-image-local","prompt":"a glass teapot on a walnut table","n":2,"response_format":"url"}'
+```
 
 ## Roadmap
 

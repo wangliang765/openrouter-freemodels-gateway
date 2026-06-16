@@ -19,6 +19,14 @@ const addApiKeyButton = document.querySelector("#addApiKeyButton");
 const refreshQuotaButton = document.querySelector("#refreshQuotaButton");
 const clearApiKeysButton = document.querySelector("#clearApiKeysButton");
 const apiKeyList = document.querySelector("#apiKeyList");
+const serviceKeySummary = document.querySelector("#serviceKeySummary");
+const serviceKeyNameInput = document.querySelector("#serviceKeyName");
+const serviceKeyConcurrencyInput = document.querySelector("#serviceKeyConcurrency");
+const serviceKeyDefaultNInput = document.querySelector("#serviceKeyDefaultN");
+const serviceKeyMaxNInput = document.querySelector("#serviceKeyMaxN");
+const createServiceKeyButton = document.querySelector("#createServiceKeyButton");
+const newServiceKeySecret = document.querySelector("#newServiceKeySecret");
+const serviceKeyList = document.querySelector("#serviceKeyList");
 const countInput = document.querySelector("#count");
 const concurrencyInput = document.querySelector("#concurrency");
 const queueModeInput = document.querySelector("#queueMode");
@@ -39,6 +47,7 @@ const progressText = document.querySelector("#progressText");
 const progressBar = document.querySelector("#progressBar");
 const serverState = document.querySelector("#serverState");
 const keyPoolSummary = document.querySelector("#keyPoolSummary");
+const auditModelsButton = document.querySelector("#auditModelsButton");
 const refreshModelsButton = document.querySelector("#refreshModelsButton");
 const modelSummary = document.querySelector("#modelSummary");
 const modelSearchInput = document.querySelector("#modelSearch");
@@ -78,6 +87,7 @@ const CHAT_MESSAGES_KEY = "openrouter.chatMessages";
 const ACTIVITY_LOG_KEY = "openrouter.activityLog";
 const APP_SETTINGS_KEY = "openrouter.appSettings";
 const MAX_ACTIVITY_ITEMS = 200;
+const MAX_BATCH_REQUESTS = 200;
 const LOCAL_BACKUP_VERSION = 1;
 const LOCAL_BACKUP_ITEMS = [
   { key: APP_SETTINGS_KEY, label: "当前设置", fallback: null },
@@ -104,10 +114,15 @@ let appSettings = readStoredAppSettings();
 let currentBatchKeys = [];
 let outputImages = [];
 let referenceImages = [];
+let serviceKeys = [];
+let serviceKeyDefaults = { concurrency: 4, defaultImageN: 20, maxImageN: 20 };
+let upstreamKeyRecords = [];
 let activeRunController = null;
 let stopRequested = false;
 let activeChatController = null;
 let stopChatRequested = false;
+
+countInput.max = String(MAX_BATCH_REQUESTS);
 
 function fallbackModelCache() {
   const now = Date.now();
@@ -433,7 +448,14 @@ function unlockApiKeyLimit(key) {
 
 function activeApiKeys() {
   refreshDailyKeyState();
-  return apiKeys.filter((key) => apiKeyLimits[key]?.status !== "daily-limited");
+  const now = Date.now();
+  return apiKeys.filter((key, index) => {
+    const record = upstreamKeyRecords[index] || {};
+    if (apiKeyLimits[key]?.status === "daily-limited") return false;
+    if (record.status === "daily-limited" && Number(record.dailyLimitedUntil || 0) > now) return false;
+    if (record.cooldownUntil && Number(record.cooldownUntil) > now) return false;
+    return true;
+  });
 }
 
 function updateKeyPoolSummary() {
@@ -688,11 +710,17 @@ function currentTemplatePayload() {
   };
 }
 
+function normalizeBatchCountValue(value, fallback = "4") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return String(Math.max(1, Math.min(MAX_BATCH_REQUESTS, Math.trunc(number))));
+}
+
 function applyTemplate(template) {
   if (template.imageModel) imageModelSelect.value = template.imageModel;
   promptInput.value = template.prompt || "";
   promptListInput.value = template.promptList || "";
-  countInput.value = template.count || "4";
+  countInput.value = normalizeBatchCountValue(template.count);
   concurrencyInput.value = template.concurrency || "3";
   queueModeInput.checked = template.queueMode === true;
   retryMaxInput.value = template.retryMax || "3";
@@ -707,7 +735,7 @@ function currentAppSettings() {
   return {
     chatModel: chatModelSelect.value || appSettings.chatModel || DEFAULT_TEXT_MODEL,
     imageModel: imageModelSelect.value || appSettings.imageModel || DEFAULT_IMAGE_MODEL,
-    count: countInput.value || "4",
+    count: normalizeBatchCountValue(countInput.value),
     concurrency: concurrencyInput.value || "3",
     queueMode: queueModeInput.checked,
     retryMax: retryMaxInput.value || "3",
@@ -726,7 +754,7 @@ function persistAppSettings() {
 function applyAppSettings() {
   chatModelSelect.value = appSettings.chatModel || DEFAULT_TEXT_MODEL;
   imageModelSelect.value = appSettings.imageModel || DEFAULT_IMAGE_MODEL;
-  countInput.value = appSettings.count || "4";
+  countInput.value = normalizeBatchCountValue(appSettings.count);
   concurrencyInput.value = appSettings.concurrency || "3";
   queueModeInput.checked = appSettings.queueMode === true;
   retryMaxInput.value = appSettings.retryMax || "3";
@@ -749,24 +777,67 @@ function parseKeyText(text) {
     .filter(Boolean);
 }
 
-function addApiKeys(keys) {
-  const seen = new Set(apiKeys);
-  let added = 0;
-  for (const key of keys) {
-    if (!seen.has(key)) {
-      apiKeys.push(key);
-      seen.add(key);
-      added += 1;
-    }
-  }
-  if (added) writeStoredApiKeys();
+function applyUpstreamKeyRecords(records = []) {
+  upstreamKeyRecords = records;
+  apiKeys = records.map((item) => item.key).filter(Boolean);
   refreshDailyKeyState();
   renderApiKeys();
-  return added;
 }
 
-function absorbPendingApiKeys() {
-  const added = addApiKeys([...parseKeyText(apiKeyInput.value), ...parseKeyText(apiKeysBulkInput.value)]);
+async function loadUpstreamKeys() {
+  const response = await fetch("/api/upstream-keys");
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || response.statusText);
+
+  const storedBrowserKeys = readStoredApiKeys();
+  if (!data.keys?.length && storedBrowserKeys.length) {
+    const migrated = await addApiKeys(storedBrowserKeys);
+    if (migrated) localStorage.removeItem(API_KEYS_KEY);
+    return;
+  }
+
+  applyUpstreamKeyRecords(Array.isArray(data.keys) ? data.keys : []);
+}
+
+async function addApiKeys(keys) {
+  const cleanKeys = [...new Set(keys.map((key) => String(key || "").trim()).filter(Boolean))];
+  if (!cleanKeys.length) return 0;
+  const response = await fetch("/api/upstream-keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "add", keys: cleanKeys })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  applyUpstreamKeyRecords(Array.isArray(data.keys) ? data.keys : []);
+  localStorage.removeItem(API_KEYS_KEY);
+  return data.added || 0;
+}
+
+async function removeApiKeyById(id) {
+  const response = await fetch("/api/upstream-keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "delete", id })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  applyUpstreamKeyRecords(Array.isArray(data.keys) ? data.keys : []);
+}
+
+async function clearStoredApiKeys() {
+  const response = await fetch("/api/upstream-keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "clear" })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  applyUpstreamKeyRecords(Array.isArray(data.keys) ? data.keys : []);
+}
+
+async function absorbPendingApiKeys() {
+  const added = await addApiKeys([...parseKeyText(apiKeyInput.value), ...parseKeyText(apiKeysBulkInput.value)]);
   if (added) {
     apiKeyInput.value = "";
     apiKeysBulkInput.value = "";
@@ -999,7 +1070,8 @@ function renderModelLists() {
   if (!imageModels.length) imageModelList.append(emptyModelState("没有匹配的免费生图模型。"));
 
   const refreshed = modelCache.refreshedAt ? new Date(modelCache.refreshedAt).toLocaleString() : "尚未刷新";
-  modelSummary.textContent = `${modelCache.text?.length || 0} 个文本 / ${modelCache.image?.length || 0} 个生图免费模型 · 当前显示 ${textModels.length + imageModels.length} 个 · 刷新时间 ${refreshed}${modelCache.error ? ` · ${modelCache.error}` : ""}`;
+  const audit = modelCache.lastAuditAt ? ` · 早检 ${new Date(modelCache.lastAuditAt).toLocaleString()}，可用 ${modelCache.lastAuditSummary?.ok ?? 0}/${modelCache.lastAuditSummary?.probed ?? 0}` : "";
+  modelSummary.textContent = `${modelCache.text?.length || 0} 个文本 / ${modelCache.image?.length || 0} 个生图免费模型 · 当前显示 ${textModels.length + imageModels.length} 个 · 刷新时间 ${refreshed}${audit}${modelCache.error ? ` · ${modelCache.error}` : ""}`;
   renderModelSelectors();
 }
 
@@ -1332,6 +1404,32 @@ async function refreshModels() {
   }
 }
 
+async function auditModels() {
+  auditModelsButton.disabled = true;
+  refreshModelsButton.disabled = true;
+  refreshModelsFromChatButton.disabled = true;
+  modelSummary.textContent = "正在审查模型可用性...";
+
+  try {
+    const response = await fetch("/api/models/audit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh: true })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    modelCache = data;
+    writeStoredModelCache();
+  } catch (error) {
+    modelCache = { ...modelCache, error: error.message };
+  } finally {
+    auditModelsButton.disabled = false;
+    refreshModelsButton.disabled = false;
+    refreshModelsFromChatButton.disabled = false;
+    renderModelLists();
+  }
+}
+
 function applyServerKeyStatuses(serverKeys = []) {
   for (const item of serverKeys) {
     const key = Number.isInteger(item.id) ? apiKeys[item.id] : "";
@@ -1354,14 +1452,18 @@ function renderApiKeys(serverKeys = null) {
 
   const labels = apiKeys.length
     ? apiKeys.map((key, index) => {
+        const record = upstreamKeyRecords[index] || {};
         const serverState = serverKeys?.find((item) => item.id === index || item.label === maskApiKey(key));
         const limit = apiKeyLimits[key];
+        const serverResetAt = record.dailyLimitedUntil || record.cooldownUntil || null;
         return {
+          id: record.id,
           index,
-          label: maskApiKey(key),
-          status: limit?.status || serverState?.status || "ready",
-          resetText: limit?.resetAt ? `刷新 ${formatBeijingReset(limit.resetAt)}` : "",
-          removable: true
+          label: record.label || maskApiKey(key),
+          source: record.source || "stored",
+          status: limit?.status || serverState?.status || record.status || "ready",
+          resetText: limit?.resetAt ? `刷新 ${formatBeijingReset(limit.resetAt)}` : serverResetAt ? `恢复 ${formatBeijingReset(serverResetAt)}` : "",
+          removable: record.source !== "env"
         };
       })
     : (serverKeys || []).map((item) => ({
@@ -1398,7 +1500,7 @@ function renderApiKeys(serverKeys = null) {
     const key = apiKeys[item.index];
     row.className = `key-row key-chip ${item.status}`;
     row.innerHTML = `
-      <span>${item.label}${item.resetText ? `<small>${item.resetText}</small>` : ""}</span>
+      <span>${item.label}${item.resetText ? `<small>${item.resetText}</small>` : ""}${item.source === "env" ? "<small>环境变量</small>" : ""}</span>
       <span>${accountTypeForKey(key)}</span>
       <span>${totalQuotaForKey(key)}</span>
       <span>${remainingQuotaForKey(key)}<small>${quotaMetaForKey(key)}</small></span>
@@ -1416,19 +1518,200 @@ function renderApiKeys(serverKeys = null) {
     const unlockButton = row.querySelector('[data-action="unlock"]');
     unlockButton?.addEventListener("click", () => unlockApiKeyLimit(key));
     const removeButton = row.querySelector('[data-action="remove"]');
-    removeButton?.addEventListener("click", () => {
-      const removedKey = apiKeys[item.index];
-      apiKeys.splice(item.index, 1);
-      delete apiKeyLimits[removedKey];
-      delete apiKeyInfo[removedKey];
-      writeStoredApiKeys();
-      writeStoredApiKeyLimits();
-      writeStoredApiKeyInfo();
-      renderApiKeys();
+    removeButton?.addEventListener("click", async () => {
+      try {
+        const removedKey = apiKeys[item.index];
+        await removeApiKeyById(item.id);
+        delete apiKeyLimits[removedKey];
+        delete apiKeyInfo[removedKey];
+        writeStoredApiKeyLimits();
+        writeStoredApiKeyInfo();
+        progressText.textContent = "OpenRouter key 已移除";
+      } catch (error) {
+        progressText.textContent = error.message || "移除 key 失败";
+      }
     });
     apiKeyList.append(row);
   }
   updateKeyPoolSummary();
+}
+
+function renderServiceKeys() {
+  serviceKeyList.innerHTML = "";
+  serviceKeySummary.textContent = `${serviceKeys.length} 个服务 key · 默认并发 ${serviceKeyDefaults.concurrency} · 默认图片数 n ${serviceKeyDefaults.defaultImageN}`;
+
+  if (!serviceKeys.length) {
+    const empty = document.createElement("div");
+    empty.className = "key-empty";
+    empty.textContent = "还没有服务 API key。创建后可用于 /v1 OpenAI 兼容接口。";
+    serviceKeyList.append(empty);
+    return;
+  }
+
+  const header = document.createElement("div");
+  header.className = "key-row service-key-row key-header";
+  header.innerHTML = `
+    <span>名称</span>
+    <span>Key</span>
+    <span>并发</span>
+    <span>默认图片数 n</span>
+    <span>单次最大 n</span>
+    <span>状态</span>
+    <span>操作</span>
+  `;
+  serviceKeyList.append(header);
+
+  for (const item of serviceKeys) {
+    const row = document.createElement("div");
+    row.className = `key-row service-key-row key-chip ${item.enabled ? "ready" : "daily-limited"}`;
+    row.innerHTML = `
+      <span><input data-field="name" type="text" value="" ${item.source === "env" ? "disabled" : ""} /></span>
+      <span>${item.label}<small>${item.source === "env" ? "环境变量" : "服务端保存"}</small></span>
+      <span><input data-field="concurrency" type="number" min="1" max="50" value="${item.concurrency}" ${item.source === "env" ? "disabled" : ""} /></span>
+      <span><input data-field="defaultImageN" type="number" min="1" max="200" value="${item.defaultImageN}" ${item.source === "env" ? "disabled" : ""} /></span>
+      <span><input data-field="maxImageN" type="number" min="1" max="200" value="${item.maxImageN}" ${item.source === "env" ? "disabled" : ""} /></span>
+      <strong>${item.enabled ? "enabled" : "disabled"}</strong>
+      <div class="key-actions">
+        ${
+          item.source === "env"
+            ? ""
+            : `<button type="button" data-action="copy">复制</button>
+               <button type="button" data-action="save">保存</button>
+               <button type="button" data-action="toggle">${item.enabled ? "禁用" : "启用"}</button>
+               <button type="button" data-action="delete">删除</button>`
+        }
+      </div>
+    `;
+    row.querySelector('[data-field="name"]').value = item.name || "";
+
+    row.querySelector('[data-action="copy"]')?.addEventListener("click", async (event) => {
+      await copyServiceKey(item.key, event.currentTarget);
+    });
+    row.querySelector('[data-action="save"]')?.addEventListener("click", () => updateServiceKey(item.id, {
+      name: row.querySelector('[data-field="name"]').value,
+      concurrency: row.querySelector('[data-field="concurrency"]').value,
+      defaultImageN: row.querySelector('[data-field="defaultImageN"]').value,
+      maxImageN: row.querySelector('[data-field="maxImageN"]').value,
+      enabled: item.enabled
+    }));
+    row.querySelector('[data-action="toggle"]')?.addEventListener("click", () => updateServiceKey(item.id, {
+      ...item,
+      enabled: !item.enabled
+    }));
+    row.querySelector('[data-action="delete"]')?.addEventListener("click", () => deleteServiceKey(item.id));
+    serviceKeyList.append(row);
+  }
+}
+
+async function loadServiceKeys() {
+  try {
+    const response = await fetch("/api/service-keys");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    serviceKeys = Array.isArray(data.keys) ? data.keys : [];
+    serviceKeyDefaults = data.defaults || serviceKeyDefaults;
+    serviceKeyConcurrencyInput.value = serviceKeyDefaults.concurrency || 4;
+    serviceKeyDefaultNInput.value = serviceKeyDefaults.defaultImageN || 20;
+    serviceKeyMaxNInput.value = serviceKeyDefaults.maxImageN || 20;
+  } catch (error) {
+    serviceKeySummary.textContent = error.message || "服务 key 加载失败";
+  } finally {
+    renderServiceKeys();
+  }
+}
+
+async function createServiceKey() {
+  createServiceKeyButton.disabled = true;
+  newServiceKeySecret.hidden = true;
+  try {
+    const response = await fetch("/api/service-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "create",
+        name: serviceKeyNameInput.value,
+        concurrency: serviceKeyConcurrencyInput.value,
+        defaultImageN: serviceKeyDefaultNInput.value,
+        maxImageN: serviceKeyMaxNInput.value
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    serviceKeys = Array.isArray(data.keys) ? data.keys : serviceKeys;
+    renderNewServiceKeySecret(data.key?.key || "");
+    newServiceKeySecret.hidden = false;
+    progressText.textContent = "服务 API key 已创建";
+    renderServiceKeys();
+  } catch (error) {
+    progressText.textContent = error.message || "服务 API key 创建失败";
+  } finally {
+    createServiceKeyButton.disabled = false;
+  }
+}
+
+function renderNewServiceKeySecret(secret) {
+  newServiceKeySecret.innerHTML = "";
+  const text = document.createElement("span");
+  text.textContent = `新服务 key：${secret}`;
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "secondary";
+  copyButton.textContent = "复制";
+  copyButton.addEventListener("click", () => copyServiceKey(secret, copyButton));
+  newServiceKeySecret.append(text, copyButton);
+}
+
+async function copyServiceKey(secret, button) {
+  if (!secret) {
+    progressText.textContent = "这个 key 没有可复制的完整密钥";
+    return;
+  }
+
+  const previousText = button?.textContent;
+  try {
+    await copyTextToClipboard(secret);
+    progressText.textContent = "服务 API key 已复制";
+    if (button) button.textContent = "已复制";
+    setTimeout(() => {
+      if (button && previousText) button.textContent = previousText;
+    }, 1200);
+  } catch (error) {
+    progressText.textContent = error.message || "复制失败";
+  }
+}
+
+async function updateServiceKey(id, patch) {
+  try {
+    const response = await fetch("/api/service-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update", id, ...patch })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    serviceKeys = Array.isArray(data.keys) ? data.keys : serviceKeys;
+    progressText.textContent = "服务 API key 已更新";
+    renderServiceKeys();
+  } catch (error) {
+    progressText.textContent = error.message || "服务 API key 更新失败";
+  }
+}
+
+async function deleteServiceKey(id) {
+  try {
+    const response = await fetch("/api/service-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete", id })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    serviceKeys = Array.isArray(data.keys) ? data.keys : [];
+    progressText.textContent = "服务 API key 已删除";
+    renderServiceKeys();
+  } catch (error) {
+    progressText.textContent = error.message || "服务 API key 删除失败";
+  }
 }
 
 function setState(label, className) {
@@ -1440,6 +1723,11 @@ function updateProgress() {
   progressBar.max = Math.max(total, 1);
   progressBar.value = finished;
   progressText.textContent = total ? `${finished} / ${total} 已完成` : "等待任务";
+}
+
+function updateResultsDensity(count) {
+  results.classList.toggle("dense", count >= 25);
+  results.classList.toggle("compact", count >= 80);
 }
 
 function renderChatMessages() {
@@ -1514,7 +1802,6 @@ async function sendChat() {
       signal: activeChatController.signal,
       body: JSON.stringify({
         model: selectedModel,
-        apiKeys: chatKeys,
         messages: chatMessages.slice(-20),
         retryMax: retryMaxInput.value,
         retryDelaySeconds: retryDelaySecondsInput.value
@@ -1541,6 +1828,7 @@ async function sendChat() {
     });
     renderApiKeys();
     setState("就绪", "idle");
+    loadUpstreamKeys().catch(() => {});
   } catch (error) {
     if (stopChatRequested || error.name === "AbortError") {
       chatMessages.push({ role: "assistant", content: "已停止生成。" });
@@ -1578,6 +1866,7 @@ async function sendChat() {
     });
     renderApiKeys();
     setState("错误", "error");
+    loadUpstreamKeys().catch(() => {});
   } finally {
     activeChat = false;
     activeChatController = null;
@@ -1689,7 +1978,7 @@ function markKeyLimited(event) {
 }
 
 async function refreshQuota() {
-  absorbPendingApiKeys();
+  await absorbPendingApiKeys();
   refreshDailyKeyState();
 
   if (!apiKeys.length) {
@@ -1704,7 +1993,7 @@ async function refreshQuota() {
     const response = await fetch("/api/key-info", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKeys })
+      body: JSON.stringify({})
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || response.statusText);
@@ -1811,7 +2100,7 @@ function markError(event) {
 
 async function runBatch() {
   if (activeRun) return;
-  absorbPendingApiKeys();
+  await absorbPendingApiKeys();
   refreshDailyKeyState();
   currentBatchKeys = activeApiKeys();
 
@@ -1824,8 +2113,10 @@ async function runBatch() {
     return;
   }
 
+  countInput.value = normalizeBatchCountValue(countInput.value);
   for (const index of taskTimers.keys()) stopTaskTimer(index);
   results.innerHTML = "";
+  updateResultsDensity(0);
   cards.clear();
   total = 0;
   finished = 0;
@@ -1852,7 +2143,6 @@ async function runBatch() {
           type: image.type,
           bytes: image.bytes
         })),
-        apiKeys: currentBatchKeys,
         count: countInput.value,
         concurrency: concurrencyInput.value,
         queueMode: queueModeInput.checked,
@@ -1887,6 +2177,7 @@ async function runBatch() {
         if (event.type === "start") {
           total = event.total;
           finished = 0;
+          updateResultsDensity(total);
           renderApiKeys(event.apiKeys);
           updateProgress();
           const referenceText = event.referenceImageCount ? ` · ${event.referenceImageCount} 张参考图` : "";
@@ -1894,6 +2185,11 @@ async function runBatch() {
         }
 
         if (event.type === "task-start") makeCard(event.index, event.prompt);
+
+        if (event.type === "heartbeat") {
+          const seconds = Math.round((event.elapsedMs || 0) / 1000);
+          progressText.textContent = `连接保持中：${finished} / ${total} 已完成 · ${event.inFlight || 0} 个请求运行中 · ${seconds}s`;
+        }
 
         if (event.type === "task-done") {
           finished += 1;
@@ -1936,6 +2232,7 @@ async function runBatch() {
       setState("就绪", "idle");
     }
     loadModels();
+    loadUpstreamKeys().catch(() => {});
   } catch (error) {
     if (stopRequested || error.name === "AbortError") {
       setState("已停止", "idle");
@@ -1945,6 +2242,7 @@ async function runBatch() {
       setState("错误", "error");
       progressText.textContent = error.message;
     }
+    loadUpstreamKeys().catch(() => {});
   } finally {
     activeRun = false;
     activeRunController = null;
@@ -1990,6 +2288,7 @@ clearChatButton.addEventListener("click", () => {
 refreshModelsFromChatButton.addEventListener("click", refreshModels);
 runButton.addEventListener("click", runBatch);
 stopRunButton.addEventListener("click", stopActiveRun);
+createServiceKeyButton.addEventListener("click", createServiceKey);
 referenceImagesInput.addEventListener("change", () => addReferenceImageFiles(referenceImagesInput.files));
 clearReferenceImagesButton.addEventListener("click", () => {
   referenceImages = [];
@@ -2000,6 +2299,7 @@ clearButton.addEventListener("click", () => {
   if (activeRun) stopActiveRun();
   for (const index of taskTimers.keys()) stopTaskTimer(index);
   results.innerHTML = "";
+  updateResultsDensity(0);
   cards.clear();
   total = 0;
   finished = 0;
@@ -2048,6 +2348,10 @@ for (const input of [countInput, concurrencyInput, retryMaxInput, retryDelaySeco
   input.addEventListener("input", persistAppSettings);
   input.addEventListener("change", persistAppSettings);
 }
+countInput.addEventListener("change", () => {
+  countInput.value = normalizeBatchCountValue(countInput.value);
+  persistAppSettings();
+});
 for (const input of [imageSizeInput, aspectRatioInput]) {
   input.addEventListener("change", persistAppSettings);
 }
@@ -2058,34 +2362,43 @@ queueModeInput.addEventListener("change", () => {
 viewTabs.forEach((tab) => {
   tab.addEventListener("click", () => showView(tab.dataset.view));
 });
-addApiKeyButton.addEventListener("click", () => {
-  const added = absorbPendingApiKeys();
-  progressText.textContent = added ? `已添加 ${added} 个 key 到 key 池` : "请先粘贴至少一个 key";
-  if (added) refreshQuota();
+addApiKeyButton.addEventListener("click", async () => {
+  try {
+    const added = await absorbPendingApiKeys();
+    progressText.textContent = added ? `已添加 ${added} 个 key 到服务端 key 池` : "请先粘贴至少一个 key";
+    if (added) refreshQuota();
+  } catch (error) {
+    progressText.textContent = error.message || "添加 key 失败";
+  }
 });
 
 apiKeyInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    const added = absorbPendingApiKeys();
-    progressText.textContent = added ? `已添加 ${added} 个 key 到 key 池` : "请先粘贴至少一个 key";
+    addApiKeyButton.click();
   }
 });
 
-clearApiKeysButton.addEventListener("click", () => {
-  apiKeys = [];
-  apiKeyLimits = {};
-  apiKeyInfo = {};
-  lastQuotaResetAt = latestBeijing8ResetAt();
-  writeStoredApiKeys();
-  writeStoredApiKeyLimits();
-  writeStoredApiKeyInfo();
-  writeStoredQuotaResetAt();
-  renderApiKeys();
+clearApiKeysButton.addEventListener("click", async () => {
+  try {
+    await clearStoredApiKeys();
+    apiKeyLimits = {};
+    apiKeyInfo = {};
+    lastQuotaResetAt = latestBeijing8ResetAt();
+    localStorage.removeItem(API_KEYS_KEY);
+    writeStoredApiKeyLimits();
+    writeStoredApiKeyInfo();
+    writeStoredQuotaResetAt();
+    renderApiKeys();
+    progressText.textContent = "服务端 OpenRouter key 池已清空";
+  } catch (error) {
+    progressText.textContent = error.message || "清空 key 失败";
+  }
 });
 
 refreshQuotaButton.addEventListener("click", refreshQuota);
 refreshModelsButton.addEventListener("click", refreshModels);
+auditModelsButton.addEventListener("click", auditModels);
 modelSearchInput.addEventListener("input", renderModelLists);
 modelStatusFilter.addEventListener("change", renderModelLists);
 outputSearchInput.addEventListener("input", renderOutputGallery);
@@ -2109,7 +2422,11 @@ refreshTemplates();
 applyAppSettings();
 renderModelLists();
 renderChatMessages();
-renderApiKeys();
+loadUpstreamKeys().catch((error) => {
+  progressText.textContent = error.message || "OpenRouter key 池加载失败";
+  renderApiKeys();
+});
+loadServiceKeys();
 renderActivityLog();
 renderLocalDataSummary();
 renderReferenceImages();

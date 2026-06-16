@@ -93,6 +93,7 @@ textarea {
 }
 
 .chat-workspace,
+.service-key-page,
 .model-page,
 .activity-page,
 .output-page,
@@ -126,6 +127,50 @@ textarea {
   position: sticky;
   top: 24px;
   padding: 20px;
+}
+
+#generateView.active {
+  min-height: 0;
+}
+
+#generateView .workspace {
+  height: calc(100vh - 126px);
+  min-height: 560px;
+  align-items: stretch;
+}
+
+#generateView .controls,
+#generateView .results-wrap {
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+#generateView .controls {
+  position: static;
+}
+
+#generateView .controls .actions {
+  position: sticky;
+  bottom: 0;
+  margin-top: 18px;
+  padding-top: 12px;
+  background: var(--panel);
+}
+
+#generateView .results-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+#generateView .toolbar {
+  flex: 0 0 auto;
+}
+
+#generateView .results {
+  flex: 1 1 auto;
+  align-content: start;
 }
 
 .title-row,
@@ -386,6 +431,28 @@ select:focus {
   margin-top: 10px;
 }
 
+.service-key-help {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f6f2e9;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.service-key-help strong {
+  color: var(--ink);
+}
+
+.service-key-create-row {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
 .key-empty,
 .key-row {
   min-height: 34px;
@@ -406,6 +473,38 @@ select:focus {
   align-items: center;
   gap: 18px;
   background: #fff;
+}
+
+.service-key-row {
+  grid-template-columns: minmax(160px, 1.1fr) minmax(150px, 1fr) minmax(76px, 0.45fr) minmax(104px, 0.55fr) minmax(104px, 0.55fr) minmax(86px, 0.55fr) minmax(190px, auto);
+  gap: 10px;
+}
+
+.service-key-row input {
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.service-key-secret {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.service-key-secret span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.service-key-secret button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .key-header {
@@ -847,6 +946,16 @@ progress {
   gap: 16px;
 }
 
+.results.dense {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.results.compact {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
 .result-card {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -860,6 +969,14 @@ progress {
   min-height: 220px;
   aspect-ratio: 1 / 1;
   background: #ede9df;
+}
+
+.results.dense .preview {
+  min-height: 160px;
+}
+
+.results.compact .preview {
+  min-height: 128px;
 }
 
 .preview img {
@@ -888,6 +1005,10 @@ progress {
   padding: 12px;
 }
 
+.results.compact .card-body {
+  padding: 10px;
+}
+
 .meta {
   display: flex;
   justify-content: space-between;
@@ -905,6 +1026,12 @@ progress {
   min-height: 58px;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.results.compact .prompt {
+  -webkit-line-clamp: 2;
+  min-height: 38px;
+  font-size: 12px;
 }
 
 .error-text {
@@ -957,6 +1084,11 @@ progress {
     grid-template-columns: 1fr;
   }
 
+  .key-page,
+  .service-key-page {
+    grid-template-columns: 1fr;
+  }
+
   .model-grid {
     grid-template-columns: 1fr;
   }
@@ -987,11 +1119,30 @@ progress {
     align-items: start;
   }
 
+  .service-key-row {
+    grid-template-columns: 1fr;
+  }
+
   .key-header {
     display: none;
   }
 
   .controls {
+    position: static;
+  }
+
+  #generateView .workspace {
+    height: auto;
+    min-height: 0;
+  }
+
+  #generateView .controls,
+  #generateView .results-wrap {
+    max-height: none;
+    overflow: visible;
+  }
+
+  #generateView .controls .actions {
     position: static;
   }
 
